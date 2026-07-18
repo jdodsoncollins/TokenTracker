@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "TokenTracker",
+    "slug": "tokentracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "tokentracker",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0F1A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jdodsoncollins.tokentracker",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "TokenTracker can use biometrics to protect access to your encrypted API credentials stored on this device only."
+      }
+    },
+    "android": {
+      "package": "com.jdodsoncollins.tokentracker",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0F1A",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "extra": {
+      "privacy": "zero-telemetry",
+      "dataPolicy": "Keys and usage stay on device. The app only talks to the LLM providers you configure — never to TokenTracker servers (there are none)."
+    }
+  }
+}

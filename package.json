@@ -1,0 +1,57 @@
+{
+  "name": "tokentracker",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "private": false,
+  "license": "MIT",
+  "description": "Local-first, privacy-first LLM API usage tracker for OpenAI, Anthropic, xAI/Grok, and more.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jdodsoncollins/TokenTracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jdodsoncollins/TokenTracker/issues"
+  },
+  "homepage": "https://github.com/jdodsoncollins/TokenTracker#readme",
+  "keywords": [
+    "llm",
+    "openai",
+    "anthropic",
+    "xai",
+    "grok",
+    "token-tracker",
+    "usage-tracker",
+    "privacy",
+    "react-native",
+    "expo",
+    "local-first"
+  ],
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "doctor": "npx expo-doctor"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~57.0.4",
+    "expo-crypto": "~57.0.0",
+    "expo-secure-store": "~57.0.0",
+    "expo-status-bar": "~57.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
