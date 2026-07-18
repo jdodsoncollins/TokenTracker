@@ -33,6 +33,8 @@ Full details: [PRIVACY.md](./PRIVACY.md)
 - **Encrypted credentials** — Keychain / Keystore; never committed to git  
 - **Auto usage** where the provider allows (e.g. OpenRouter key usage, OpenAI org costs with admin keys)  
 - **Manual snapshots** when auto-usage isn’t available  
+- **Usage charts** — 7 / 14 / 30 day timelines for spend deltas, cost levels, and tokens (all local history)  
+- **Cost estimates** — reported costs when available; otherwise token × public list rates (clearly marked as estimates) plus a simple ~30-day pace projection  
 - **Clean dark UI** — dashboard, provider management, privacy tab  
 - **Wipe everything** — one control to erase local keys + history  
 

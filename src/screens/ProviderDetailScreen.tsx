@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +12,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app/AppContext';
+import { TimeSeriesChart } from '../components/TimeSeriesChart';
+import { buildTimeSeries } from '../services/analytics';
+import { resolveCostUsd } from '../services/pricing';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
 import { colors, radius, spacing } from '../theme/colors';
 import { formatRelativeTime, formatTokens, formatUsd } from '../utils/format';
@@ -25,6 +28,7 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
   const insets = useSafeAreaInsets();
   const {
     providers,
+    history,
     refreshProvider,
     removeProvider,
     logManualUsage,
@@ -39,6 +43,32 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
   const [note, setNote] = useState('');
   const [newKey, setNewKey] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const providerHistory = useMemo(
+    () => history.filter((h) => h.providerId === providerId),
+    [history, providerId],
+  );
+
+  const series = useMemo(
+    () =>
+      buildTimeSeries(
+        providerHistory,
+        provider ? [provider] : [],
+        14,
+      ),
+    [providerHistory, provider],
+  );
+
+  const liveEstimate = useMemo(() => {
+    if (!provider?.lastUsage) return null;
+    return resolveCostUsd({
+      kind: provider.kind,
+      costUsd: provider.lastUsage.costUsd,
+      inputTokens: provider.lastUsage.inputTokens,
+      outputTokens: provider.lastUsage.outputTokens,
+      totalTokens: provider.lastUsage.totalTokens,
+    });
+  }, [provider]);
 
   if (!provider) {
     return (
@@ -144,6 +174,12 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
             <Text style={styles.cellValue}>{formatTokens(usage?.outputTokens)}</Text>
           </View>
         </View>
+        {liveEstimate?.isEstimate && liveEstimate.value != null ? (
+          <Text style={styles.estimate}>
+            Est. cost {formatUsd(liveEstimate.value)}
+            {liveEstimate.modelLabel ? ` · ${liveEstimate.modelLabel} rates` : ''}
+          </Text>
+        ) : null}
         <Text style={styles.meta}>
           Source: {usage?.source ?? '—'} · {formatRelativeTime(usage?.fetchedAt)}
         </Text>
@@ -166,10 +202,23 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
         </Pressable>
       </View>
 
+      <TimeSeriesChart
+        points={series.points}
+        title="14-day usage"
+        subtitle={
+          series.projectedMonthlyCost != null
+            ? `~${formatUsd(series.projectedMonthlyCost)} / 30 days at current pace`
+            : `${providerHistory.length} local snapshot${providerHistory.length === 1 ? '' : 's'}`
+        }
+        color={def.color}
+        emptyHint="Refresh or log snapshots for this provider to chart usage over time."
+      />
+
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Manual snapshot</Text>
         <Text style={styles.help}>
-          Use this when auto-usage isn’t available. Values stay offline.
+          Use this when auto-usage isn’t available. Leave cost blank and enter tokens
+          to store a snapshot — the dashboard will estimate cost from list rates.
         </Text>
         <TextInput
           style={styles.input}
@@ -274,6 +323,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   meta: { color: colors.textMuted, fontSize: 12 },
+  estimate: {
+    color: colors.warning,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   error: { color: colors.danger, fontSize: 13 },
   input: {
     backgroundColor: colors.bgElevated,

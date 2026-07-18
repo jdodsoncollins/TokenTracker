@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,10 +9,18 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app/AppContext';
+import { CostEstimatePanel } from '../components/CostEstimatePanel';
 import { EmptyState } from '../components/EmptyState';
 import { PrivacyBanner } from '../components/PrivacyBanner';
 import { ProviderCard } from '../components/ProviderCard';
 import { StatCard } from '../components/StatCard';
+import { TimeSeriesChart } from '../components/TimeSeriesChart';
+import {
+  buildCostEstimateRows,
+  buildTimeSeries,
+  sumDisplayCost,
+  type ChartRange,
+} from '../services/analytics';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
 import { colors, radius, spacing } from '../theme/colors';
 import { formatTokens, formatUsd } from '../utils/format';
@@ -23,14 +31,39 @@ interface Props {
   onOpenProvider: (id: string) => void;
 }
 
+const RANGES: ChartRange[] = [7, 14, 30];
+
 export function DashboardScreen({
   onOpenPrivacy,
   onOpenProviders,
   onOpenProvider,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const { ready, providers, totals, refreshingId, refreshAll, refreshProvider } =
-    useApp();
+  const {
+    ready,
+    providers,
+    history,
+    totals,
+    refreshingId,
+    refreshAll,
+    refreshProvider,
+  } = useApp();
+  const [range, setRange] = useState<ChartRange>(14);
+
+  const series = useMemo(
+    () => buildTimeSeries(history, providers, range),
+    [history, providers, range],
+  );
+
+  const estimateRows = useMemo(
+    () => buildCostEstimateRows(providers),
+    [providers],
+  );
+
+  const estimateSum = useMemo(
+    () => sumDisplayCost(estimateRows),
+    [estimateRows],
+  );
 
   const breakdown = useMemo(() => {
     return providers
@@ -81,11 +114,19 @@ export function DashboardScreen({
       <View style={styles.statsRow}>
         <StatCard
           label="Tracked spend"
-          value={formatUsd(totals.withCost ? totals.costUsd : null)}
+          value={formatUsd(
+            estimateSum.total > 0
+              ? estimateSum.total
+              : totals.withCost
+                ? totals.costUsd
+                : null,
+          )}
           hint={
-            totals.withCost
-              ? `${totals.withCost} provider${totals.withCost === 1 ? '' : 's'}`
-              : 'Add keys or manual entries'
+            estimateSum.estimatedPortion > 0
+              ? 'includes token estimates'
+              : totals.withCost
+                ? `${totals.withCost} provider${totals.withCost === 1 ? '' : 's'}`
+                : 'Add keys or manual entries'
           }
           accent={colors.accent}
         />
@@ -101,9 +142,59 @@ export function DashboardScreen({
         />
       </View>
 
+      <View style={styles.rangeRow}>
+        <Text style={styles.sectionTitle}>Usage over time</Text>
+        <View style={styles.rangeTabs}>
+          {RANGES.map((r) => {
+            const on = r === range;
+            return (
+              <Pressable
+                key={r}
+                onPress={() => setRange(r)}
+                style={[styles.rangeTab, on && styles.rangeTabOn]}
+              >
+                <Text style={[styles.rangeTabText, on && styles.rangeTabTextOn]}>
+                  {r}d
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <TimeSeriesChart
+        points={series.points}
+        title="Timeline"
+        subtitle={
+          series.hasData
+            ? `Spend Δ total ${formatUsd(series.totalCostDelta)} · token Δ ${formatTokens(series.totalTokenDelta)}`
+            : 'Local history builds as you refresh or log snapshots'
+        }
+        color={colors.accent}
+      />
+
+      <TimeSeriesChart
+        points={series.points}
+        title="Cost level"
+        subtitle="Latest known spend reading (carry-forward per day)"
+        metric="costLevel"
+        color={colors.success}
+        showMetricToggle={false}
+        emptyHint="No cost levels yet — reported costs or token estimates will appear here."
+      />
+
+      <CostEstimatePanel
+        rows={estimateRows}
+        total={estimateSum.total}
+        estimatedPortion={estimateSum.estimatedPortion}
+        reportedPortion={estimateSum.reportedPortion}
+        projectedMonthly={series.projectedMonthlyCost}
+        averageDaily={series.averageDailyCost}
+      />
+
       {breakdown.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Spend mix</Text>
+          <Text style={styles.sectionTitle}>Spend mix (reported)</Text>
           <View style={styles.bars}>
             {breakdown.map((b) => (
               <View key={b.id} style={styles.barRow}>
@@ -213,6 +304,35 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     gap: spacing.md,
+  },
+  rangeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  rangeTabs: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  rangeTab: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  rangeTabOn: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+  },
+  rangeTabText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  rangeTabTextOn: {
+    color: colors.accent,
   },
   section: {
     gap: spacing.md,

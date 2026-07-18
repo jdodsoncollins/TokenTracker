@@ -57,6 +57,12 @@ export async function appendUsageHistory(entry: UsageHistoryEntry): Promise<void
   await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
 }
 
+export async function removeHistoryForProvider(providerId: string): Promise<void> {
+  const history = await loadUsageHistory();
+  const next = history.filter((h) => h.providerId !== providerId);
+  await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+}
+
 export async function clearAllLocalData(): Promise<void> {
   await AsyncStorage.multiRemove([PROVIDERS_KEY, HISTORY_KEY]);
 }

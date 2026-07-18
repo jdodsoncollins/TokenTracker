@@ -21,13 +21,17 @@ import {
   appendUsageHistory,
   clearAllLocalData,
   loadProviders,
+  loadUsageHistory,
+  removeHistoryForProvider,
   saveProviders,
+  type UsageHistoryEntry,
 } from '../services/storage';
 import { createId } from '../utils/format';
 
 interface AppState {
   ready: boolean;
   providers: ProviderConfig[];
+  history: UsageHistoryEntry[];
   refreshingId: string | null;
   globalError: string | null;
   addProvider: (input: {
@@ -63,14 +67,19 @@ const Ctx = createContext<AppState | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [history, setHistory] = useState<UsageHistoryEntry[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const loaded = await loadProviders();
+        const [loaded, hist] = await Promise.all([
+          loadProviders(),
+          loadUsageHistory(),
+        ]);
         setProviders(loaded);
+        setHistory(hist);
       } catch (e) {
         setGlobalError(e instanceof Error ? e.message : 'Failed to load local data');
       } finally {
@@ -82,6 +91,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const persist = useCallback(async (next: ProviderConfig[]) => {
     setProviders(next);
     await saveProviders(next);
+  }, []);
+
+  const recordHistory = useCallback(async (entry: UsageHistoryEntry) => {
+    await appendUsageHistory(entry);
+    setHistory((prev) => [entry, ...prev].slice(0, 500));
   }, []);
 
   const addProvider = useCallback(
@@ -113,7 +127,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const next = [config, ...providers];
       await persist(next);
 
-      // Best-effort initial refresh
       if (input.apiKey.trim()) {
         try {
           const result = await fetchProviderUsage(
@@ -128,7 +141,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             lastError: result.ok ? null : result.message ?? 'Refresh failed',
           };
           if (result.snapshot) {
-            await appendUsageHistory({ providerId: id, snapshot: result.snapshot });
+            await recordHistory({ providerId: id, snapshot: result.snapshot });
           }
           await persist(next.map((p) => (p.id === id ? updated : p)));
           return {
@@ -150,12 +163,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       return { ok: true, message: 'Provider saved (no key — use manual usage).' };
     },
-    [persist, providers],
+    [persist, providers, recordHistory],
   );
 
   const removeProvider = useCallback(
     async (id: string) => {
       await deleteCredential(id);
+      await removeHistoryForProvider(id);
+      setHistory((prev) => prev.filter((h) => h.providerId !== id));
       await persist(providers.filter((p) => p.id !== id));
     },
     [persist, providers],
@@ -175,7 +190,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               p.id === id
                 ? {
                     ...p,
-                    lastError: 'No credential stored. Update the API key or log usage manually.',
+                    lastError:
+                      'No credential stored. Update the API key or log usage manually.',
                     updatedAt: new Date().toISOString(),
                   }
                 : p,
@@ -187,7 +203,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const nextUsage: UsageSnapshot | null =
           result.snapshot ?? provider.lastUsage ?? null;
         if (result.snapshot) {
-          await appendUsageHistory({ providerId: id, snapshot: result.snapshot });
+          await recordHistory({ providerId: id, snapshot: result.snapshot });
         }
         await persist(
           providers.map((p) =>
@@ -215,12 +231,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setRefreshingId(null);
       }
     },
-    [persist, providers],
+    [persist, providers, recordHistory],
   );
 
   const refreshAll = useCallback(async () => {
     for (const p of providers) {
-      // sequential to avoid bursting provider rate limits
       // eslint-disable-next-line no-await-in-loop
       await refreshProvider(p.id);
     }
@@ -237,7 +252,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
     ) => {
       const snapshot = createManualSnapshot(input);
-      await appendUsageHistory({ providerId: id, snapshot });
+      await recordHistory({ providerId: id, snapshot });
       await persist(
         providers.map((p) =>
           p.id === id
@@ -251,7 +266,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     },
-    [persist, providers],
+    [persist, providers, recordHistory],
   );
 
   const updateCredential = useCallback(
@@ -275,6 +290,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     await clearAllLocalData();
     setProviders([]);
+    setHistory([]);
   }, [providers]);
 
   const totals = useMemo(() => {
@@ -304,6 +320,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ready,
       providers,
+      history,
       refreshingId,
       globalError,
       addProvider,
@@ -318,6 +335,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [
       ready,
       providers,
+      history,
       refreshingId,
       globalError,
       addProvider,
