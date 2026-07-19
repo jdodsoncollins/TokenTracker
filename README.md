@@ -35,6 +35,7 @@ Full details: [PRIVACY.md](./PRIVACY.md)
 - **Manual snapshots** when auto-usage isn’t available  
 - **Usage charts** — 7 / 14 / 30 day timelines for spend deltas, cost levels, and tokens (all local history)  
 - **Cost estimates** — reported costs when available; otherwise token × public list rates (clearly marked as estimates) plus a simple ~30-day pace projection  
+- **Platform-native chrome** — Liquid Glass–inspired surfaces & floating tab bar on iOS; Material 3 Expressive tonal surfaces & nav indicators on Android ([DESIGN.md](./DESIGN.md))  
 - **Clean dark UI** — dashboard, provider management, privacy tab  
 - **Wipe everything** — one control to erase local keys + history  
 
@@ -77,13 +78,15 @@ Then open in Expo Go, an iOS simulator, Android emulator, or web.
 
 ```
 src/
-  app/           # shell + context
-  components/    # UI pieces
+  app/           # shell + context (platform tab chrome)
+  components/    # UI pieces + ui/ Surface, Screen, buttons
   screens/       # Home, Providers, Detail, Privacy
   services/      # secure store, local cache, provider adapters
-  theme/         # colors / spacing
+  theme/         # Liquid Glass + Material 3 tokens
   types/         # shared types
 ```
+
+Design notes and HIG / M3 citations: [DESIGN.md](./DESIGN.md).
 
 ## Scripts
 

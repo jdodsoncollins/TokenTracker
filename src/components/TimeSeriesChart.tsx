@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { DayPoint } from '../services/analytics';
-import { colors, radius, spacing } from '../theme/colors';
+import { getTheme, isMaterialChrome, spacing, typography } from '../theme/tokens';
 import { formatTokens, formatUsd } from '../utils/format';
+import { Surface } from './ui/Surface';
 
 export type ChartMetric = 'costDelta' | 'costLevel' | 'tokenDelta' | 'tokenLevel';
 
@@ -13,7 +14,6 @@ interface Props {
   metric?: ChartMetric;
   color?: string;
   emptyHint?: string;
-  /** Allow switching metric tabs */
   showMetricToggle?: boolean;
 }
 
@@ -47,13 +47,14 @@ export function TimeSeriesChart({
   title,
   subtitle,
   metric: metricProp,
-  color = colors.accent,
+  color,
   emptyHint = 'Refresh providers or log manual snapshots to build a timeline.',
   showMetricToggle = true,
 }: Props) {
+  const t = getTheme();
+  const chartColor = color ?? t.accent;
   const [metric, setMetric] = useState<ChartMetric>(metricProp ?? 'costDelta');
   const active = metricProp ?? metric;
-  const [width, setWidth] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
 
   const max = useMemo(() => {
@@ -63,30 +64,39 @@ export function TimeSeriesChart({
 
   const hasData = points.some((p) => valueOf(p, active) > 0);
   const chartHeight = 140;
-
-  const onLayout = (e: LayoutChangeEvent) => {
-    setWidth(e.nativeEvent.layout.width);
-  };
-
   const selectedPoint =
     selected != null && selected >= 0 && selected < points.length
       ? points[selected]
       : null;
-
-  // Label stride so we don't crowd the axis
   const labelEvery = points.length > 14 ? 4 : points.length > 8 ? 2 : 1;
+  const peak = hasData
+    ? Math.max(...points.map((p) => valueOf(p, active)))
+    : 0;
 
   return (
-    <View style={styles.card}>
+    <Surface variant="card" padded>
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          <Text style={[styles.title, { color: t.text }]}>{title}</Text>
+          {subtitle ? (
+            <Text style={[styles.subtitle, { color: t.textMuted }]}>{subtitle}</Text>
+          ) : null}
         </View>
         {selectedPoint ? (
-          <View style={styles.tooltip}>
-            <Text style={styles.tooltipLabel}>{selectedPoint.label}</Text>
-            <Text style={styles.tooltipValue}>
+          <View
+            style={[
+              styles.tooltip,
+              {
+                backgroundColor: t.bgElevated,
+                borderColor: t.border,
+                borderRadius: t.radius.sm,
+              },
+            ]}
+          >
+            <Text style={[styles.tooltipLabel, { color: t.textMuted }]}>
+              {selectedPoint.label}
+            </Text>
+            <Text style={[styles.tooltipValue, { color: t.text }]}>
               {formatValue(active, valueOf(selectedPoint, active))}
             </Text>
           </View>
@@ -104,9 +114,23 @@ export function TimeSeriesChart({
                   setMetric(m.id);
                   setSelected(null);
                 }}
-                style={[styles.tab, on && styles.tabOn]}
+                style={[
+                  styles.tab,
+                  {
+                    borderRadius: isMaterialChrome ? t.radius.full : t.radius.full,
+                    backgroundColor: on ? t.accentSoft : t.bgElevated,
+                    borderColor: on ? t.accent : t.border,
+                  },
+                ]}
               >
-                <Text style={[styles.tabText, on && styles.tabTextOn]}>{m.label}</Text>
+                <Text
+                  style={[
+                    styles.tabText,
+                    { color: on ? t.accent : t.textMuted },
+                  ]}
+                >
+                  {m.label}
+                </Text>
               </Pressable>
             );
           })}
@@ -115,14 +139,30 @@ export function TimeSeriesChart({
 
       {!hasData ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyText}>{emptyHint}</Text>
+          <Text style={[styles.emptyText, { color: t.textSecondary }]}>
+            {emptyHint}
+          </Text>
         </View>
       ) : (
-        <View onLayout={onLayout} style={[styles.chart, { height: chartHeight + 28 }]}>
-          {/* grid lines */}
-          <View style={[styles.gridLine, { bottom: 28 + chartHeight * 0.25 }]} />
-          <View style={[styles.gridLine, { bottom: 28 + chartHeight * 0.5 }]} />
-          <View style={[styles.gridLine, { bottom: 28 + chartHeight * 0.75 }]} />
+        <View style={[styles.chart, { height: chartHeight + 28 }]}>
+          <View
+            style={[
+              styles.gridLine,
+              { bottom: 28 + chartHeight * 0.25, backgroundColor: t.borderSubtle },
+            ]}
+          />
+          <View
+            style={[
+              styles.gridLine,
+              { bottom: 28 + chartHeight * 0.5, backgroundColor: t.borderSubtle },
+            ]}
+          />
+          <View
+            style={[
+              styles.gridLine,
+              { bottom: 28 + chartHeight * 0.75, backgroundColor: t.borderSubtle },
+            ]}
+          />
 
           <View style={[styles.barsRow, { height: chartHeight }]}>
             {points.map((p, i) => {
@@ -142,8 +182,10 @@ export function TimeSeriesChart({
                         styles.bar,
                         {
                           height: h,
-                          backgroundColor: isSel ? colors.text : color,
+                          backgroundColor: isSel ? t.text : chartColor,
                           opacity: v > 0 ? 1 : 0.15,
+                          borderTopLeftRadius: isMaterialChrome ? 4 : 3,
+                          borderTopRightRadius: isMaterialChrome ? 4 : 3,
                         },
                       ]}
                     />
@@ -157,71 +199,57 @@ export function TimeSeriesChart({
             {points.map((p, i) => (
               <View key={p.date} style={styles.labelCell}>
                 {i % labelEvery === 0 || i === points.length - 1 ? (
-                  <Text style={styles.axisLabel} numberOfLines={1}>
-                    {p.label.replace(/ /g, '\n')}
+                  <Text style={[styles.axisLabel, { color: t.textMuted }]} numberOfLines={1}>
+                    {p.label}
                   </Text>
                 ) : null}
               </View>
             ))}
           </View>
-
-          {width > 0 ? null : null}
         </View>
       )}
 
       {hasData ? (
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Peak {formatValue(active, max === 1 && !hasData ? 0 : Math.max(...points.map((p) => valueOf(p, active))))}
+          <Text style={[styles.footerText, { color: t.textSecondary }]}>
+            Peak {formatValue(active, peak)}
           </Text>
-          <Text style={styles.footerHint}>Tap a bar for detail</Text>
+          <Text style={[styles.footerHint, { color: t.textMuted }]}>
+            Tap a bar for detail
+          </Text>
         </View>
       ) : null}
-    </View>
+    </Surface>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: spacing.md,
+    marginBottom: spacing.md,
   },
   title: {
-    color: colors.text,
     fontSize: 16,
     fontWeight: '700',
   },
   subtitle: {
-    color: colors.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
   tooltip: {
-    backgroundColor: colors.bgElevated,
-    borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: colors.border,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     alignItems: 'flex-end',
   },
   tooltipLabel: {
-    color: colors.textMuted,
     fontSize: 10,
     fontWeight: '600',
   },
   tooltipValue: {
-    color: colors.text,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -229,33 +257,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+    marginBottom: spacing.md,
   },
   tab: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: colors.bgElevated,
     borderWidth: 1,
-    borderColor: colors.border,
-  },
-  tabOn: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
   },
   tabText: {
-    color: colors.textMuted,
     fontSize: 11,
     fontWeight: '600',
-  },
-  tabTextOn: {
-    color: colors.accent,
   },
   empty: {
     paddingVertical: spacing.xl,
     alignItems: 'center',
   },
   emptyText: {
-    color: colors.textSecondary,
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 18,
@@ -270,7 +287,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.borderSubtle,
   },
   barsRow: {
     flexDirection: 'row',
@@ -288,8 +304,6 @@ const styles = StyleSheet.create({
     minHeight: 4,
   },
   bar: {
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
     minHeight: 0,
   },
   labels: {
@@ -302,21 +316,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   axisLabel: {
-    color: colors.textMuted,
     fontSize: 9,
     textAlign: 'center',
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: spacing.md,
   },
   footerText: {
-    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
   },
   footerHint: {
-    color: colors.textMuted,
     fontSize: 11,
   },
 });

@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme/colors';
+import { getTheme, spacing, typography } from '../theme/tokens';
+import { Surface } from './ui/Surface';
 
 interface Props {
   label: string;
@@ -8,54 +9,62 @@ interface Props {
   accent?: string;
 }
 
-export function StatCard({ label, value, hint, accent = colors.accent }: Props) {
+export function StatCard({ label, value, hint, accent }: Props) {
+  const t = getTheme();
+  const bar = accent ?? t.accent;
+
   return (
-    <View style={styles.card}>
-      <View style={[styles.bar, { backgroundColor: accent }]} />
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit>
-        {value}
-      </Text>
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-    </View>
+    <Surface variant="card" style={styles.flex} padded={false}>
+      <View style={styles.inner}>
+        <View style={[styles.bar, { backgroundColor: bar }]} />
+        <Text style={[styles.label, { color: t.textMuted }]}>{label}</Text>
+        <Text
+          style={[styles.value, { color: t.text }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {value}
+        </Text>
+        {hint ? (
+          <Text style={[styles.hint, { color: t.textSecondary }]}>{hint}</Text>
+        ) : null}
+      </View>
+    </Surface>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
+  flex: {
     flex: 1,
     minWidth: 140,
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+  },
+  inner: {
     padding: spacing.lg,
     overflow: 'hidden',
   },
   bar: {
     position: 'absolute',
     left: 0,
-    top: 0,
-    bottom: 0,
+    top: 12,
+    bottom: 12,
     width: 3,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
   },
   label: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    ...typography.overline,
     marginBottom: 6,
+    marginLeft: 6,
   },
   value: {
-    color: colors.text,
     fontSize: 26,
     fontWeight: '700',
     letterSpacing: -0.5,
+    marginLeft: 6,
   },
   hint: {
-    color: colors.textSecondary,
     fontSize: 12,
     marginTop: 6,
+    marginLeft: 6,
   },
 });

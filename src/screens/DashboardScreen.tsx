@@ -2,12 +2,10 @@ import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app/AppContext';
 import { CostEstimatePanel } from '../components/CostEstimatePanel';
 import { EmptyState } from '../components/EmptyState';
@@ -15,6 +13,9 @@ import { PrivacyBanner } from '../components/PrivacyBanner';
 import { ProviderCard } from '../components/ProviderCard';
 import { StatCard } from '../components/StatCard';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
+import { PrimaryButton } from '../components/ui/PrimaryButton';
+import { Screen } from '../components/ui/Screen';
+import { Surface } from '../components/ui/Surface';
 import {
   buildCostEstimateRows,
   buildTimeSeries,
@@ -22,7 +23,12 @@ import {
   type ChartRange,
 } from '../services/analytics';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
-import { colors, radius, spacing } from '../theme/colors';
+import {
+  getTheme,
+  isMaterialChrome,
+  spacing,
+  typography,
+} from '../theme/tokens';
 import { formatTokens, formatUsd } from '../utils/format';
 
 interface Props {
@@ -38,7 +44,7 @@ export function DashboardScreen({
   onOpenProviders,
   onOpenProvider,
 }: Props) {
-  const insets = useSafeAreaInsets();
+  const t = getTheme();
   const {
     ready,
     providers,
@@ -81,32 +87,27 @@ export function DashboardScreen({
 
   if (!ready) {
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator color={colors.accent} size="large" />
+      <View style={[styles.center, { backgroundColor: t.bg }]}>
+        <ActivityIndicator color={t.accent} size="large" />
       </View>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={[
-        styles.content,
-        { paddingTop: insets.top + spacing.lg, paddingBottom: 120 },
-      ]}
-    >
+    <Screen>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.kicker}>LOCAL · ENCRYPTED</Text>
-          <Text style={styles.title}>TokenTracker</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.kicker, { color: t.accent }]}>
+            {isMaterialChrome ? 'MATERIAL · ON-DEVICE' : 'LIQUID GLASS · LOCAL'}
+          </Text>
+          <Text style={[styles.title, { color: t.text }]}>TokenTracker</Text>
         </View>
-        <Pressable
+        <PrimaryButton
+          label="Refresh"
+          variant="tonal"
           onPress={() => refreshAll()}
-          style={styles.refreshAll}
-          accessibilityLabel="Refresh all providers"
-        >
-          <Text style={styles.refreshAllText}>Refresh</Text>
-        </Pressable>
+          style={styles.refreshBtn}
+        />
       </View>
 
       <PrivacyBanner compact onPress={onOpenPrivacy} />
@@ -128,7 +129,7 @@ export function DashboardScreen({
                 ? `${totals.withCost} provider${totals.withCost === 1 ? '' : 's'}`
                 : 'Add keys or manual entries'
           }
-          accent={colors.accent}
+          accent={t.accent}
         />
         <StatCard
           label="Tokens"
@@ -138,12 +139,12 @@ export function DashboardScreen({
               ? 'sum of known totals'
               : 'when providers report them'
           }
-          accent={colors.info}
+          accent={t.info}
         />
       </View>
 
       <View style={styles.rangeRow}>
-        <Text style={styles.sectionTitle}>Usage over time</Text>
+        <Text style={[styles.sectionTitle, { color: t.text }]}>Usage over time</Text>
         <View style={styles.rangeTabs}>
           {RANGES.map((r) => {
             const on = r === range;
@@ -151,9 +152,22 @@ export function DashboardScreen({
               <Pressable
                 key={r}
                 onPress={() => setRange(r)}
-                style={[styles.rangeTab, on && styles.rangeTabOn]}
+                style={[
+                  styles.rangeTab,
+                  {
+                    borderRadius: t.radius.full,
+                    backgroundColor: on ? t.accentSoft : t.bgCardSolid,
+                    borderColor: on ? t.accent : t.border,
+                  },
+                ]}
               >
-                <Text style={[styles.rangeTabText, on && styles.rangeTabTextOn]}>
+                <Text
+                  style={{
+                    color: on ? t.accent : t.textMuted,
+                    fontSize: 12,
+                    fontWeight: '700',
+                  }}
+                >
                   {r}d
                 </Text>
               </Pressable>
@@ -170,7 +184,7 @@ export function DashboardScreen({
             ? `Spend Δ total ${formatUsd(series.totalCostDelta)} · token Δ ${formatTokens(series.totalTokenDelta)}`
             : 'Local history builds as you refresh or log snapshots'
         }
-        color={colors.accent}
+        color={t.accent}
       />
 
       <TimeSeriesChart
@@ -178,7 +192,7 @@ export function DashboardScreen({
         title="Cost level"
         subtitle="Latest known spend reading (carry-forward per day)"
         metric="costLevel"
-        color={colors.success}
+        color={t.success}
         showMetricToggle={false}
         emptyHint="No cost levels yet — reported costs or token estimates will appear here."
       />
@@ -194,49 +208,58 @@ export function DashboardScreen({
 
       {breakdown.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Spend mix (reported)</Text>
-          <View style={styles.bars}>
-            {breakdown.map((b) => (
-              <View key={b.id} style={styles.barRow}>
-                <Text style={styles.barLabel} numberOfLines={1}>
-                  {b.label}
-                </Text>
-                <View style={styles.barTrack}>
-                  <View
-                    style={[
-                      styles.barFill,
-                      {
-                        backgroundColor: b.color,
-                        width: `${Math.max(6, (b.cost / maxCost) * 100)}%`,
-                      },
-                    ]}
-                  />
+          <Text style={[styles.sectionTitle, { color: t.text }]}>
+            Spend mix (reported)
+          </Text>
+          <Surface variant="card" padded>
+            <View style={styles.bars}>
+              {breakdown.map((b) => (
+                <View key={b.id} style={styles.barRow}>
+                  <Text
+                    style={[styles.barLabel, { color: t.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {b.label}
+                  </Text>
+                  <View style={[styles.barTrack, { backgroundColor: t.bgElevated }]}>
+                    <View
+                      style={[
+                        styles.barFill,
+                        {
+                          backgroundColor: b.color,
+                          width: `${Math.max(6, (b.cost / maxCost) * 100)}%`,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.barValue, { color: t.text }]}>
+                    {formatUsd(b.cost)}
+                  </Text>
                 </View>
-                <Text style={styles.barValue}>{formatUsd(b.cost)}</Text>
-              </View>
-            ))}
-          </View>
+              ))}
+            </View>
+          </Surface>
         </View>
       )}
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Providers</Text>
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Providers</Text>
           <Pressable onPress={onOpenProviders}>
-            <Text style={styles.link}>Manage</Text>
+            <Text style={[styles.link, { color: t.accent }]}>Manage</Text>
           </Pressable>
         </View>
 
         {providers.length === 0 ? (
-          <View style={styles.emptyCard}>
+          <Surface variant="card" padded={false}>
             <EmptyState
               title="No providers yet"
               body="Add OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, or a custom endpoint. Keys are encrypted on-device."
             />
-            <Pressable style={styles.cta} onPress={onOpenProviders}>
-              <Text style={styles.ctaText}>Add a provider</Text>
-            </Pressable>
-          </View>
+            <View style={styles.ctaWrap}>
+              <PrimaryButton label="Add a provider" onPress={onOpenProviders} />
+            </View>
+          </Surface>
         ) : (
           <View style={styles.list}>
             {providers.map((p) => (
@@ -251,22 +274,13 @@ export function DashboardScreen({
           </View>
         )}
       </View>
-    </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  content: {
-    paddingHorizontal: spacing.lg,
-    gap: spacing.lg,
-  },
   center: {
     flex: 1,
-    backgroundColor: colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -274,32 +288,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
+    gap: spacing.md,
   },
   kicker: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.4,
+    ...typography.overline,
   },
   title: {
-    color: colors.text,
-    fontSize: 32,
-    fontWeight: '800',
-    letterSpacing: -0.8,
+    ...typography.largeTitle,
     marginTop: 4,
   },
-  refreshAll: {
-    backgroundColor: colors.bgCard,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: radius.full,
-  },
-  refreshAllText: {
-    color: colors.text,
-    fontWeight: '600',
-    fontSize: 14,
+  refreshBtn: {
+    minHeight: 40,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
   },
   statsRow: {
     flexDirection: 'row',
@@ -317,22 +318,7 @@ const styles = StyleSheet.create({
   rangeTab: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: colors.bgCard,
     borderWidth: 1,
-    borderColor: colors.border,
-  },
-  rangeTabOn: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
-  },
-  rangeTabText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  rangeTabTextOn: {
-    color: colors.accent,
   },
   section: {
     gap: spacing.md,
@@ -343,21 +329,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sectionTitle: {
-    color: colors.text,
     fontSize: 18,
     fontWeight: '700',
   },
   link: {
-    color: colors.accent,
     fontWeight: '600',
     fontSize: 14,
   },
   bars: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
     gap: spacing.md,
   },
   barRow: {
@@ -366,7 +345,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   barLabel: {
-    color: colors.textSecondary,
     width: 72,
     fontSize: 12,
     fontWeight: '600',
@@ -375,7 +353,6 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.bgElevated,
     overflow: 'hidden',
   },
   barFill: {
@@ -383,7 +360,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   barValue: {
-    color: colors.text,
     width: 64,
     textAlign: 'right',
     fontSize: 12,
@@ -392,23 +368,8 @@ const styles = StyleSheet.create({
   list: {
     gap: spacing.md,
   },
-  emptyCard: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+  ctaWrap: {
+    alignItems: 'center',
     paddingBottom: spacing.xl,
-  },
-  cta: {
-    alignSelf: 'center',
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.full,
-  },
-  ctaText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
   },
 });

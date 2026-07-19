@@ -1,8 +1,15 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
-import { colors, radius, spacing } from '../theme/colors';
+import { getTheme, isMaterialChrome, spacing, typography } from '../theme/tokens';
 import { formatRelativeTime, formatTokens, formatUsd } from '../utils/format';
+import { Surface } from './ui/Surface';
 
 interface Props {
   provider: ProviderConfig;
@@ -11,84 +18,109 @@ interface Props {
   onRefresh?: () => void;
 }
 
-export function ProviderCard({ provider, refreshing, onPress, onRefresh }: Props) {
+export function ProviderCard({
+  provider,
+  refreshing,
+  onPress,
+  onRefresh,
+}: Props) {
+  const t = getTheme();
   const def = PROVIDER_CATALOG[provider.kind];
   const usage = provider.lastUsage;
 
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      android_ripple={
+        isMaterialChrome
+          ? { color: 'rgba(180,167,255,0.08)' }
+          : undefined
+      }
+      style={({ pressed }) => [
+        pressed && !isMaterialChrome ? { opacity: 0.92 } : null,
+      ]}
     >
-      <View style={styles.row}>
-        <View style={[styles.badge, { backgroundColor: def.color + '22' }]}>
-          <Text style={[styles.badgeText, { color: def.color }]}>
-            {def.shortName.slice(0, 2).toUpperCase()}
-          </Text>
-        </View>
-        <View style={styles.meta}>
-          <Text style={styles.title}>{provider.label}</Text>
-          <Text style={styles.sub}>
-            {def.name}
-            {provider.hasCredential ? ' · key on device' : ' · no key'}
-          </Text>
-        </View>
-        <Pressable
-          onPress={(e) => {
-            e.stopPropagation?.();
-            onRefresh?.();
-          }}
-          hitSlop={10}
-          style={styles.refreshBtn}
-          accessibilityLabel={`Refresh ${provider.label}`}
-        >
-          {refreshing ? (
-            <ActivityIndicator size="small" color={colors.accent} />
-          ) : (
-            <Text style={styles.refreshText}>↻</Text>
-          )}
-        </Pressable>
-      </View>
+      <Surface variant="card" padded={false}>
+        <View style={styles.inner}>
+          <View style={styles.row}>
+            <View style={[styles.badge, { backgroundColor: def.color + '22' }]}>
+              <Text style={[styles.badgeText, { color: def.color }]}>
+                {def.shortName.slice(0, 2).toUpperCase()}
+              </Text>
+            </View>
+            <View style={styles.meta}>
+              <Text style={[styles.title, { color: t.text }]}>{provider.label}</Text>
+              <Text style={[styles.sub, { color: t.textMuted }]}>
+                {def.name}
+                {provider.hasCredential ? ' · key on device' : ' · no key'}
+              </Text>
+            </View>
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation?.();
+                onRefresh?.();
+              }}
+              hitSlop={10}
+              style={[
+                styles.refreshBtn,
+                {
+                  backgroundColor: t.bgElevated,
+                  borderColor: t.border,
+                  borderRadius: t.radius.full,
+                },
+              ]}
+              accessibilityLabel={`Refresh ${provider.label}`}
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color={t.accent} />
+              ) : (
+                <Text style={[styles.refreshText, { color: t.accent }]}>↻</Text>
+              )}
+            </Pressable>
+          </View>
 
-      <View style={styles.stats}>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>Cost</Text>
-          <Text style={styles.statValue}>{formatUsd(usage?.costUsd)}</Text>
-        </View>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>Tokens</Text>
-          <Text style={styles.statValue}>{formatTokens(usage?.totalTokens)}</Text>
-        </View>
-        <View style={styles.stat}>
-          <Text style={styles.statLabel}>Updated</Text>
-          <Text style={styles.statValueSm}>
-            {formatRelativeTime(usage?.fetchedAt ?? provider.updatedAt)}
-          </Text>
-        </View>
-      </View>
+          <View style={styles.stats}>
+            <View style={styles.stat}>
+              <Text style={[styles.statLabel, { color: t.textMuted }]}>Cost</Text>
+              <Text style={[styles.statValue, { color: t.text }]}>
+                {formatUsd(usage?.costUsd)}
+              </Text>
+            </View>
+            <View style={styles.stat}>
+              <Text style={[styles.statLabel, { color: t.textMuted }]}>Tokens</Text>
+              <Text style={[styles.statValue, { color: t.text }]}>
+                {formatTokens(usage?.totalTokens)}
+              </Text>
+            </View>
+            <View style={styles.stat}>
+              <Text style={[styles.statLabel, { color: t.textMuted }]}>
+                Updated
+              </Text>
+              <Text style={[styles.statValueSm, { color: t.textSecondary }]}>
+                {formatRelativeTime(usage?.fetchedAt ?? provider.updatedAt)}
+              </Text>
+            </View>
+          </View>
 
-      {provider.lastError ? (
-        <Text style={styles.error} numberOfLines={2}>
-          {provider.lastError}
-        </Text>
-      ) : usage?.windowLabel ? (
-        <Text style={styles.window}>{usage.windowLabel}</Text>
-      ) : null}
+          {provider.lastError ? (
+            <Text style={[styles.error, { color: t.danger }]} numberOfLines={2}>
+              {provider.lastError}
+            </Text>
+          ) : usage?.windowLabel ? (
+            <Text style={[styles.window, { color: t.textMuted }]}>
+              {usage.windowLabel}
+            </Text>
+          ) : null}
+        </View>
+      </Surface>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+  inner: {
     padding: spacing.lg,
     gap: spacing.md,
-  },
-  pressed: {
-    backgroundColor: colors.bgCardHover,
   },
   row: {
     flexDirection: 'row',
@@ -96,9 +128,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   badge: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.md,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -110,27 +142,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    color: colors.text,
     fontSize: 16,
     fontWeight: '700',
   },
   sub: {
-    color: colors.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
   refreshBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.full,
-    backgroundColor: colors.bgElevated,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth * 2,
   },
   refreshText: {
-    color: colors.accent,
     fontSize: 18,
     fontWeight: '600',
   },
@@ -142,31 +168,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   statLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    ...typography.overline,
+    fontSize: 10,
   },
   statValue: {
-    color: colors.text,
     fontSize: 18,
     fontWeight: '700',
     marginTop: 2,
   },
   statValueSm: {
-    color: colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
     marginTop: 4,
   },
   error: {
-    color: colors.danger,
     fontSize: 12,
     lineHeight: 16,
   },
   window: {
-    color: colors.textMuted,
     fontSize: 12,
   },
 });

@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, spacing } from '../theme/colors';
+import { getTheme, spacing, typography } from '../theme/tokens';
 
 interface Props {
   title: string;
@@ -7,11 +7,14 @@ interface Props {
 }
 
 export function EmptyState({ title, body }: Props) {
+  const t = getTheme();
   return (
     <View style={styles.wrap}>
-      <Text style={styles.emoji}>◈</Text>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.body}>{body}</Text>
+      <View style={[styles.iconRing, { borderColor: t.accentSoft, backgroundColor: t.accentSoft }]}>
+        <Text style={[styles.emoji, { color: t.accent }]}>◈</Text>
+      </View>
+      <Text style={[styles.title, { color: t.text }]}>{title}</Text>
+      <Text style={[styles.body, { color: t.textSecondary }]}>{body}</Text>
     </View>
   );
 }
@@ -23,21 +26,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     gap: spacing.sm,
   },
-  emoji: {
-    color: colors.accent,
-    fontSize: 36,
+  iconRing: {
+    width: 56,
+    height: 56,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: spacing.sm,
+    borderWidth: 1,
+  },
+  emoji: {
+    fontSize: 22,
   },
   title: {
-    color: colors.text,
+    ...typography.title,
     fontSize: 18,
-    fontWeight: '700',
     textAlign: 'center',
   },
   body: {
-    color: colors.textSecondary,
+    ...typography.body,
     fontSize: 14,
-    lineHeight: 20,
     textAlign: 'center',
     maxWidth: 320,
   },

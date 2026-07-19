@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme/colors';
+import { getTheme, spacing, typography } from '../theme/tokens';
+import { Surface } from './ui/Surface';
 
 interface Props {
   onPress?: () => void;
@@ -7,56 +8,61 @@ interface Props {
 }
 
 export function PrivacyBanner({ onPress, compact }: Props) {
+  const t = getTheme();
+
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.wrap,
-        compact && styles.compact,
-        pressed && onPress ? styles.pressed : null,
-      ]}
       accessibilityRole={onPress ? 'button' : 'text'}
       accessibilityLabel="Privacy: zero usage is ever recorded by TokenTracker"
     >
-      <View style={styles.dot} />
-      <View style={styles.textCol}>
-        <Text style={styles.title}>Zero telemetry. Zero accounts.</Text>
-        {!compact && (
-          <Text style={styles.body}>
-            TokenTracker never records your usage. Keys stay encrypted on this device.
-            The only network calls are direct HTTPS to the providers you add.
-          </Text>
-        )}
-        {compact && (
-          <Text style={styles.body}>Your data never leaves this device via us.</Text>
-        )}
-      </View>
+      <Surface
+        variant="card"
+        solid
+        padded={false}
+        style={{
+          borderColor: 'rgba(61, 220, 151, 0.28)',
+          backgroundColor: t.privacySoft,
+        }}
+      >
+        <View style={[styles.row, compact && styles.compact]}>
+          <View style={[styles.dot, { backgroundColor: t.privacy }]} />
+          <View style={styles.textCol}>
+            <Text style={[styles.title, { color: t.privacy }]}>
+              Zero telemetry. Zero accounts.
+            </Text>
+            {!compact && (
+              <Text style={[styles.body, { color: t.textSecondary }]}>
+                TokenTracker never records your usage. Keys stay encrypted on this
+                device. The only network calls are direct HTTPS to the providers you
+                add.
+              </Text>
+            )}
+            {compact && (
+              <Text style={[styles.body, { color: t.textSecondary }]}>
+                Your data never leaves this device via us.
+              </Text>
+            )}
+          </View>
+        </View>
+      </Surface>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
+  row: {
     flexDirection: 'row',
     gap: spacing.md,
-    backgroundColor: colors.privacySoft,
-    borderColor: 'rgba(61, 220, 151, 0.25)',
-    borderWidth: 1,
-    borderRadius: radius.lg,
     padding: spacing.lg,
   },
   compact: {
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-  },
-  pressed: {
-    opacity: 0.85,
   },
   dot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.privacy,
     marginTop: 5,
   },
   textCol: {
@@ -64,13 +70,10 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   title: {
-    color: colors.privacy,
-    fontSize: 14,
+    ...typography.callout,
     fontWeight: '700',
-    letterSpacing: 0.2,
   },
   body: {
-    color: colors.textSecondary,
     fontSize: 13,
     lineHeight: 18,
   },
