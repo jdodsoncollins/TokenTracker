@@ -32,8 +32,7 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-secure-store",
-      "expo-blur"
+      "expo-secure-store"
     ],
     "extra": {
       "privacy": "zero-telemetry",

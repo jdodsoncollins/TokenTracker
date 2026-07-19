@@ -96,6 +96,8 @@ Design notes and HIG / M3 citations: [DESIGN.md](./DESIGN.md).
 | `npm run ios` / `android` / `web` | Platform targets |
 | `npm run typecheck` | TypeScript |
 | `npm test` | Unit tests (vitest) |
+| `npm run test:coverage` | Unit tests + v8 coverage (domain logic ≥80%) |
+| `npm run smoke` | Offline manual gate: typecheck + coverage |
 
 ## Security hygiene
 

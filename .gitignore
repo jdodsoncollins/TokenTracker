@@ -45,6 +45,10 @@ local.properties
 # typescript
 *.tsbuildinfo
 
+# coverage
+coverage/
+
+
 # IDE
 .idea/
 .vscode/
