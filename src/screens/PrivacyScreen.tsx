@@ -99,10 +99,11 @@ export function PrivacyScreen() {
       <Surface variant="card" padded>
         <Text style={[styles.cardTitle, { color: t.text }]}>How usage is measured</Text>
         <Text style={[styles.cardBody, { color: t.textSecondary }]}>
-          Cumulative readings carry forward and produce deltas only against compatible
-          cumulative readings. Period and point readings appear only on the day observed.
-          Readings with different windows stay separate. Token cost estimates require an
-          explicit model and remain labelled as estimates.
+          OpenAI admin credentials can return 90 days of daily organization costs and
+          completion tokens. Costs include all billed API capabilities; token counts cover
+          completions only. Anthropic admin credentials return daily message token usage.
+          Other providers may return a current reading or no history. Token cost estimates
+          require an explicit model and remain labelled as estimates.
         </Text>
       </Surface>
 

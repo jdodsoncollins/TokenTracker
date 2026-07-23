@@ -32,9 +32,9 @@ Full details: [PRIVACY.md](./PRIVACY.md)
 
 - **Multi-provider**: OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, and custom bases
 - **Native secure storage**: Keychain / Keystore through `expo-secure-store`
-- **Auto usage** where the provider allows, such as OpenRouter key usage and OpenAI organization costs and tokens with admin keys
+- **Auto usage** where the provider allows, including 90 days of daily OpenAI organization costs and completion tokens, plus Anthropic message token history, with admin keys
 - **Manual snapshots** when auto usage is unavailable
-- **Usage charts**: 7 / 14 / 30 day timelines from local history
+- **Usage charts**: 7 / 14 / 30 / 90 day timelines from local history
 - **Cost estimates**: provider-reported costs take precedence; token-based estimates require an explicit model and use its configured rates
 - **Platform-native chrome**: Liquid Glass-inspired surfaces and a floating tab bar on iOS; Material 3 Expressive tonal surfaces and navigation indicators on Android ([DESIGN.md](./DESIGN.md))
 - **Clean dark UI**: dashboard, provider management, privacy tab
@@ -62,7 +62,7 @@ Then open in Expo Go, an iOS simulator, Android emulator, or web.
 3. **Save and validate** and **Refresh** send it directly to the selected provider. Custom endpoints require HTTPS except `http://localhost` and `http://127.0.0.1` during local development.
 4. TokenTracker stores provider labels and usage snapshots in AsyncStorage. It does not send prompts or provider response bodies to TokenTracker infrastructure because no such infrastructure exists.
 
-Cumulative readings carry forward and produce deltas only against a compatible cumulative reading. Period and point readings appear only on the day observed. TokenTracker keeps readings separate when their measurement windows differ. A token-based cost estimate requires you to select a model explicitly; TokenTracker labels the result as an estimate.
+Cumulative readings carry forward and produce deltas only against a compatible cumulative reading. Daily API periods plot against their provider-reported date. Other period and point readings appear only on the day observed. TokenTracker keeps readings separate when their measurement windows differ. A token-based cost estimate requires you to select a model explicitly; TokenTracker labels the result as an estimate.
 
 **Never commit keys.** `.gitignore` blocks `.env`, secrets, and key material. Use the in-app form only.
 
@@ -70,12 +70,14 @@ Cumulative readings carry forward and produce deltas only against a compatible c
 
 | Provider | Auto usage | Notes |
 |----------|------------|--------|
-| OpenAI | Org costs and tokens with **admin** key | Project keys validate; manual snapshots remain visible after refresh |
-| Anthropic | Usage report with **admin** access | Standard keys validate; manual otherwise |
+| OpenAI | 90 days of daily org costs and completion tokens | Costs include all billed API capabilities; token counts cover the completions endpoint; requires an organization **admin API key** |
+| Anthropic | 90 days of daily token usage | Requires an **Admin API key**; standard keys validate only |
 | xAI (Grok) | Key validation | Manual cost snapshots supported |
 | OpenRouter | Lifetime USD on key endpoint | Best out-of-the-box auto usage |
 | Google Gemini | Key validation | Billing in Google Cloud; manual snapshots |
 | Custom | Optional `/v1/models` check | OpenAI-compatible base URL |
+
+OpenAI project keys and Anthropic standard keys cannot query organization or account reports. One admin credential covers the corresponding organization or account. Adding multiple admin credentials for the same scope duplicates totals in TokenTracker. Add separate provider entries for separate organizations or accounts.
 
 ## Project layout
 

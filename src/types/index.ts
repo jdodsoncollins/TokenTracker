@@ -29,7 +29,7 @@ export interface UsageSnapshot {
   modelId?: string;
   source: UsageSource;
   fetchedAt: string;
-  /** Human-readable window, e.g. "last 30 days". */
+  /** Human-readable measurement window. */
   windowLabel?: string;
 }
 

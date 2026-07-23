@@ -13,7 +13,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderDefinition> = {
     keyHint: 'sk-… or sk-admin-… (admin keys can fetch org usage)',
     supportsAutoUsage: true,
     usageHint:
-      'Organization cost and token usage endpoints need an admin API key. Regular project keys can still be validated and used with manual snapshots.',
+      'An organization admin API key provides 90 days of daily costs and completion tokens. Costs include all billed API capabilities, while token counts cover only the completions usage endpoint. Project keys cannot query organization reports. Adding another admin credential from the same organization duplicates totals; use separate entries for separate organizations.',
   },
   anthropic: {
     kind: 'anthropic',
@@ -26,7 +26,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderDefinition> = {
     keyHint: 'sk-ant-…',
     supportsAutoUsage: true,
     usageHint:
-      'Admin Usage API keys can pull usage reports. Standard keys validate connectivity; use manual entry otherwise.',
+      'An Admin API key provides 90 days of daily message token usage for the account. Standard keys cannot query account reports. Adding another admin credential from the same account duplicates totals; use separate entries for separate accounts.',
   },
   xai: {
     kind: 'xai',

@@ -4,7 +4,7 @@ import { resolveCostUsd } from './pricing';
 import { PROVIDER_CATALOG } from './providers/catalog';
 import { hasUsageMetrics } from './usageSnapshots';
 
-export type ChartRange = 7 | 14 | 30;
+export type ChartRange = 7 | 14 | 30 | 90;
 
 export interface DayPoint {
   /** YYYY-MM-DD (local) */
@@ -147,10 +147,29 @@ function comparabilityKey(snapshot: UsageSnapshot): string | null {
   return null;
 }
 
+function isDailyApiPeriod(snapshot: UsageSnapshot): boolean {
+  if (
+    snapshot.source !== 'api' ||
+    snapshot.measurementKind !== 'period' ||
+    !snapshot.periodStart ||
+    !snapshot.periodEnd
+  ) {
+    return false;
+  }
+  const start = Date.parse(snapshot.periodStart);
+  const end = Date.parse(snapshot.periodEnd);
+  const duration = end - start;
+  return (
+    Number.isFinite(duration) &&
+    duration > 0 &&
+    duration <= 26 * 60 * 60 * 1000
+  );
+}
+
 /**
  * Build daily series from local history.
- * Cumulative levels carry forward. Period, point, and legacy unknown readings only
- * appear on the day observed. Deltas require two compatible cumulative snapshots.
+ * Cumulative levels carry forward. Daily API periods use their period boundary
+ * as direct daily values. Other readings appear only on the day observed.
  */
 export function buildTimeSeries(
   history: UsageHistoryEntry[],
@@ -169,7 +188,12 @@ export function buildTimeSeries(
 
   // Chronological snapshots per provider
   const byProvider = new Map<string, UsageHistoryEntry[]>();
+  const dailyPeriods: UsageHistoryEntry[] = [];
   for (const entry of history) {
+    if (isDailyApiPeriod(entry.snapshot)) {
+      dailyPeriods.push(entry);
+      continue;
+    }
     const list = byProvider.get(entry.providerId) ?? [];
     list.push(entry);
     byProvider.set(entry.providerId, list);
@@ -198,6 +222,31 @@ export function buildTimeSeries(
     deltaTokens.set(day, 0);
     costReadingKeys.set(day, []);
     tokenReadingKeys.set(day, []);
+  }
+
+  // Provider-reported daily periods are already daily values, so chart them
+  // against their period boundary without deriving a cumulative difference.
+  for (const entry of dailyPeriods) {
+    const start = parseIso(entry.snapshot.periodStart!);
+    if (!start) continue;
+    const day = start.toISOString().slice(0, 10);
+    if (!daySet.has(day) || !hasUsageMetrics(entry.snapshot)) continue;
+    const kind = kindFor(entry.providerId, providers);
+    const resolved = resolvedCost(kind, entry.snapshot);
+    const tok = tokenCount(entry.snapshot);
+    if (resolved.value != null) {
+      levelCost.set(day, (levelCost.get(day) ?? 0) + resolved.value);
+      deltaCost.set(day, (deltaCost.get(day) ?? 0) + resolved.value);
+      costReadingKeys.get(day)?.push(comparabilityKey(entry.snapshot));
+      if (resolved.isEstimate) {
+        estShare.set(day, (estShare.get(day) ?? 0) + resolved.value);
+      }
+    }
+    if (tok != null) {
+      levelTokens.set(day, (levelTokens.get(day) ?? 0) + tok);
+      deltaTokens.set(day, (deltaTokens.get(day) ?? 0) + tok);
+      tokenReadingKeys.get(day)?.push(comparabilityKey(entry.snapshot));
+    }
   }
 
   // Levels: only explicitly cumulative readings survive beyond their observation day.

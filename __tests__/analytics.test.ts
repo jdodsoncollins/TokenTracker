@@ -155,6 +155,60 @@ describe('buildTimeSeries', () => {
     expect(series.hasData).toBe(false);
     expect(series.points).toHaveLength(7);
   });
+
+  it('plots API daily periods by boundary without cumulative differencing', () => {
+    const history: UsageHistoryEntry[] = [
+      {
+        providerId: 'p1',
+        snapshot: {
+          costUsd: 4,
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          measurementKind: 'period',
+          periodStart: '2026-07-08T00:00:00.000Z',
+          periodEnd: '2026-07-09T00:00:00.000Z',
+          source: 'api',
+          fetchedAt: '2026-07-10T12:00:00.000Z',
+        },
+      },
+      {
+        providerId: 'p1',
+        snapshot: {
+          costUsd: 7,
+          inputTokens: 200,
+          outputTokens: 30,
+          totalTokens: 230,
+          measurementKind: 'period',
+          periodStart: '2026-07-09T00:00:00.000Z',
+          periodEnd: '2026-07-10T00:00:00.000Z',
+          source: 'api',
+          fetchedAt: '2026-07-10T12:00:00.000Z',
+        },
+      },
+    ];
+
+    const series = buildTimeSeries(
+      history,
+      [provider],
+      7,
+      new Date('2026-07-10T18:00:00.000Z'),
+    );
+    expect(series.points.find((point) => point.date === '2026-07-08')).toMatchObject({
+      costLevel: 4,
+      tokenLevel: 120,
+      costDelta: 4,
+      tokenDelta: 120,
+    });
+    expect(series.points.find((point) => point.date === '2026-07-09')).toMatchObject({
+      costLevel: 7,
+      tokenLevel: 230,
+      costDelta: 7,
+      tokenDelta: 230,
+    });
+    expect(series.totalCostDelta).toBe(11);
+    expect(series.totalTokenDelta).toBe(350);
+  });
 });
 
 describe('cost estimates', () => {

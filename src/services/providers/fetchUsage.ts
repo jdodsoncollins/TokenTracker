@@ -3,12 +3,16 @@ import type { ProviderKind, UsageSnapshot } from '../../types';
 export interface FetchResult {
   ok: boolean;
   snapshot?: UsageSnapshot;
+  history?: UsageSnapshot[];
   validated?: boolean;
   message?: string;
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const NETWORK_ERROR_MESSAGE = 'Network request timed out or failed.';
+const HISTORY_DAYS = 90;
+const DAILY_PAGE_LIMIT = 31;
+const MAX_REPORT_PAGES = 10;
 
 async function providerFetch(
   input: RequestInfo | URL,
@@ -39,6 +43,104 @@ function snap(
   return { fetchedAt: nowIso(), ...partial };
 }
 
+function openAiUtcDay(
+  start: unknown,
+): { periodStart: string; periodEnd: string } | null {
+  if (
+    typeof start !== 'number' ||
+    !Number.isFinite(start) ||
+    start < 0
+  ) {
+    return null;
+  }
+  const startDate = new Date(start * 1000);
+  if (!Number.isFinite(startDate.getTime())) {
+    return null;
+  }
+  const utcMidnight = Date.UTC(
+    startDate.getUTCFullYear(),
+    startDate.getUTCMonth(),
+    startDate.getUTCDate(),
+  );
+  return {
+    periodStart: new Date(utcMidnight).toISOString(),
+    periodEnd: new Date(utcMidnight + 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+function isoPeriod(
+  start: unknown,
+  end: unknown,
+): { periodStart: string; periodEnd: string } | null {
+  if (typeof start !== 'string' || typeof end !== 'string') return null;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return null;
+  }
+  return {
+    periodStart: new Date(startMs).toISOString(),
+    periodEnd: new Date(endMs).toISOString(),
+  };
+}
+
+function periodKey(period: { periodStart: string; periodEnd: string }): string {
+  return `${period.periodStart}:${period.periodEnd}`;
+}
+
+interface OpenAIPage<T> {
+  data?: T[];
+  has_more?: boolean;
+  next_page?: string | null;
+}
+
+class IncompleteOpenAIReportError extends Error {}
+class IncompleteAnthropicReportError extends Error {}
+
+async function fetchOpenAIPages<T>(
+  endpoint: string,
+  params: URLSearchParams,
+  headers: Record<string, string>,
+  validItem: (item: T) => boolean,
+): Promise<T[] | null> {
+  const items: T[] = [];
+  const seenPages = new Set<string>();
+
+  for (let pageCount = 0; pageCount < MAX_REPORT_PAGES; pageCount += 1) {
+    let response: Response;
+    try {
+      response = await providerFetch(`${endpoint}?${params}`, { headers });
+    } catch {
+      throw new IncompleteOpenAIReportError();
+    }
+    if (!response.ok) {
+      if (pageCount === 0) return null;
+      throw new IncompleteOpenAIReportError();
+    }
+
+    const page = (await safeJson(response)) as OpenAIPage<T> | null;
+    if (
+      !page ||
+      !Array.isArray(page.data) ||
+      typeof page.has_more !== 'boolean' ||
+      !page.data.every(validItem)
+    ) {
+      if (pageCount > 0) throw new IncompleteOpenAIReportError();
+      throw new Error('Invalid OpenAI report response.');
+    }
+    items.push(...page.data);
+
+    if (!page.has_more) return items;
+    if (!page.next_page || seenPages.has(page.next_page)) {
+      throw new IncompleteOpenAIReportError();
+    }
+    seenPages.add(page.next_page);
+    params.set('page', page.next_page);
+  }
+
+  throw new IncompleteOpenAIReportError();
+}
+
 async function safeJson(res: Response): Promise<unknown> {
   const text = await res.text();
   try {
@@ -52,71 +154,131 @@ async function safeJson(res: Response): Promise<unknown> {
 async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
   // Costs API (organization admin keys)
   const end = Math.floor(Date.now() / 1000);
-  const start = end - 30 * 24 * 60 * 60;
+  const start = end - HISTORY_DAYS * 24 * 60 * 60;
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
   try {
-    const costsRes = await providerFetch(
-      `https://api.openai.com/v1/organization/costs?start_time=${start}&end_time=${end}&bucket_width=1d&limit=31`,
-      {
-        headers,
-      },
+    const reportParams = new URLSearchParams({
+      start_time: String(start),
+      end_time: String(end),
+      bucket_width: '1d',
+      limit: String(DAILY_PAGE_LIMIT),
+    });
+    const costs = await fetchOpenAIPages<{
+      start_time?: number;
+      end_time?: number;
+      results?: Array<{ amount?: { value?: number } }>;
+    }>(
+      'https://api.openai.com/v1/organization/costs',
+      new URLSearchParams(reportParams),
+      headers,
+      (bucket) => Array.isArray(bucket.results),
     );
-    if (costsRes.ok) {
-      const data = (await safeJson(costsRes)) as {
-        data?: Array<{ results?: Array<{ amount?: { value?: number } }> }>;
-      } | null;
-      if (
-        !Array.isArray(data?.data) ||
-        !data.data.every((bucket) => Array.isArray(bucket.results))
-      ) {
-        throw new Error('Invalid OpenAI costs response.');
-      }
+    if (costs) {
       let total = 0;
-      for (const bucket of data.data) {
+      const fetchedAt = nowIso();
+      const daily = new Map<
+        string,
+        {
+          periodStart: string;
+          periodEnd: string;
+          costUsd: number;
+          input: number | null;
+          output: number | null;
+        }
+      >();
+      for (const bucket of costs) {
+        let bucketCost = 0;
         for (const r of bucket.results ?? []) {
-          total += nonnegativeNumber(r.amount?.value) ?? 0;
+          bucketCost += nonnegativeNumber(r.amount?.value) ?? 0;
+        }
+        total += bucketCost;
+        const period = openAiUtcDay(bucket.start_time);
+        if (period) {
+          const key = periodKey(period);
+          const existing = daily.get(key);
+          daily.set(key, {
+            ...period,
+            costUsd: (existing?.costUsd ?? 0) + bucketCost,
+            input: existing?.input ?? null,
+            output: existing?.output ?? null,
+          });
         }
       }
       let inputTokens: number | null = null;
       let outputTokens: number | null = null;
+      let usage: Array<{
+        start_time?: number;
+        end_time?: number;
+        results?: Array<{ input_tokens?: number; output_tokens?: number }>;
+      }> | null = null;
+      let usageWarning: string | undefined;
       try {
-        const usageRes = await providerFetch(
-          `https://api.openai.com/v1/organization/usage/completions?start_time=${start}&end_time=${end}&bucket_width=1d&limit=31`,
-          { headers },
+        usage = await fetchOpenAIPages(
+          'https://api.openai.com/v1/organization/usage/completions',
+          new URLSearchParams(reportParams),
+          headers,
+          (bucket) => Array.isArray(bucket.results),
         );
-        if (usageRes.ok) {
-          const usage = (await safeJson(usageRes)) as {
-            data?: Array<{
-              results?: Array<{
-                input_tokens?: number;
-                output_tokens?: number;
-              }>;
-            }>;
-          } | null;
-          if (
-            Array.isArray(usage?.data) &&
-            usage.data.every((bucket) => Array.isArray(bucket.results))
-          ) {
-            inputTokens = 0;
-            outputTokens = 0;
-            for (const bucket of usage.data) {
-              for (const result of bucket.results ?? []) {
-                inputTokens += nonnegativeNumber(result.input_tokens) ?? 0;
-                outputTokens += nonnegativeNumber(result.output_tokens) ?? 0;
-              }
-            }
-          }
+        if (usage === null) {
+          usageWarning =
+            'Organization costs loaded, but OpenAI completion token history is unavailable.';
         }
       } catch {
-        // Cost remains useful when the separate token report is unavailable.
+        usageWarning =
+          'Organization costs loaded, but OpenAI completion token history did not complete.';
+      }
+      if (usage) {
+        inputTokens = 0;
+        outputTokens = 0;
+        for (const bucket of usage) {
+          let bucketInput = 0;
+          let bucketOutput = 0;
+          for (const result of bucket.results ?? []) {
+            bucketInput += nonnegativeNumber(result.input_tokens) ?? 0;
+            bucketOutput += nonnegativeNumber(result.output_tokens) ?? 0;
+          }
+          inputTokens += bucketInput;
+          outputTokens += bucketOutput;
+          const period = openAiUtcDay(bucket.start_time);
+          if (period) {
+            const key = periodKey(period);
+            const existing = daily.get(key);
+            daily.set(key, {
+              ...period,
+              costUsd: existing?.costUsd ?? 0,
+              input: (existing?.input ?? 0) + bucketInput,
+              output: (existing?.output ?? 0) + bucketOutput,
+            });
+          }
+        }
       }
       return {
         ok: true,
         validated: true,
+        message: usageWarning,
+        history:
+          daily.size > 0
+            ? Array.from(daily.values()).map((bucket) => ({
+                costUsd: bucket.costUsd,
+                inputTokens: bucket.input,
+                outputTokens: bucket.output,
+                totalTokens:
+                  bucket.input != null && bucket.output != null
+                    ? bucket.input + bucket.output
+                    : null,
+                measurementKind: 'period',
+                periodStart: bucket.periodStart,
+                periodEnd: bucket.periodEnd,
+                source: 'api',
+                fetchedAt: bucket.periodStart,
+                windowLabel: 'daily organization costs and completion tokens',
+              }))
+            : [],
         snapshot: snap({
+          fetchedAt,
           costUsd: total,
           inputTokens,
           outputTokens,
@@ -130,12 +292,18 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
           source: 'api',
           windowLabel:
             inputTokens != null
-              ? 'last 30 days (organization costs and usage)'
-              : 'last 30 days (organization costs)',
+              ? 'last 90 days (organization costs and completion tokens)'
+              : 'last 90 days (organization costs)',
         }),
       };
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof IncompleteOpenAIReportError) {
+      return {
+        ok: false,
+        message: 'OpenAI organization history request did not complete.',
+      };
+    }
     // continue to models probe
   }
 
@@ -147,7 +315,7 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
       ok: true,
       validated: true,
       message:
-        'Key works. Automatic spend and token usage require an organization admin key. Manual snapshots remain visible after refresh.',
+        'Key works. Organization costs and completion token history require an organization admin key. Manual snapshots remain visible after refresh.',
       snapshot: snap({
         costUsd: null,
         inputTokens: null,
@@ -176,15 +344,16 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
 
   // Admin usage report (requires admin key + org access)
   try {
+    const periodEndMs = Date.now();
     const periodStart = new Date(
-      Date.now() - 30 * 24 * 60 * 60 * 1000,
+      periodEndMs - HISTORY_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const periodEnd = new Date().toISOString();
+    const periodEnd = new Date(periodEndMs).toISOString();
     const params = new URLSearchParams({
       starting_at: periodStart,
       ending_at: periodEnd,
       bucket_width: '1d',
-      limit: '31',
+      limit: String(DAILY_PAGE_LIMIT),
     });
     const endpoint =
       'https://api.anthropic.com/v1/organizations/usage_report/messages';
@@ -192,13 +361,28 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
     let input = 0;
     let output = 0;
     let pageCount = 0;
+    const fetchedAt = nowIso();
+    const daily = new Map<
+      string,
+      { periodStart: string; periodEnd: string; input: number; output: number }
+    >();
 
-    while (pageCount < 100) {
-      const usageRes = await providerFetch(`${endpoint}?${params}`, { headers });
-      if (!usageRes.ok) break;
+    while (pageCount < MAX_REPORT_PAGES) {
+      let usageRes: Response;
+      try {
+        usageRes = await providerFetch(`${endpoint}?${params}`, { headers });
+      } catch {
+        throw new IncompleteAnthropicReportError();
+      }
+      if (!usageRes.ok) {
+        if (pageCount === 0) break;
+        throw new IncompleteAnthropicReportError();
+      }
 
       const data = (await safeJson(usageRes)) as {
         data?: Array<{
+          starting_at?: string;
+          ending_at?: string;
           results?: Array<{
             uncached_input_tokens?: number;
             cache_read_input_tokens?: number;
@@ -219,18 +403,32 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
         typeof data.has_more !== 'boolean' ||
         !data.data.every((bucket) => Array.isArray(bucket.results))
       ) {
-        break;
+        throw new IncompleteAnthropicReportError();
       }
 
       for (const bucket of data.data) {
+        let bucketInput = 0;
+        let bucketOutput = 0;
         for (const result of bucket.results ?? []) {
-          input += nonnegativeNumber(result.uncached_input_tokens) ?? 0;
-          input += nonnegativeNumber(result.cache_read_input_tokens) ?? 0;
-          input +=
+          bucketInput += nonnegativeNumber(result.uncached_input_tokens) ?? 0;
+          bucketInput += nonnegativeNumber(result.cache_read_input_tokens) ?? 0;
+          bucketInput +=
             nonnegativeNumber(result.cache_creation?.ephemeral_5m_input_tokens) ?? 0;
-          input +=
+          bucketInput +=
             nonnegativeNumber(result.cache_creation?.ephemeral_1h_input_tokens) ?? 0;
-          output += nonnegativeNumber(result.output_tokens) ?? 0;
+          bucketOutput += nonnegativeNumber(result.output_tokens) ?? 0;
+        }
+        input += bucketInput;
+        output += bucketOutput;
+        const period = isoPeriod(bucket.starting_at, bucket.ending_at);
+        if (period) {
+          const key = periodKey(period);
+          const existing = daily.get(key);
+          daily.set(key, {
+            ...period,
+            input: (existing?.input ?? 0) + bucketInput,
+            output: (existing?.output ?? 0) + bucketOutput,
+          });
         }
       }
 
@@ -239,7 +437,23 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
         return {
           ok: true,
           validated: true,
+          history:
+            daily.size > 0
+              ? Array.from(daily.values()).map((bucket) => ({
+                  costUsd: null,
+                  inputTokens: bucket.input,
+                  outputTokens: bucket.output,
+                  totalTokens: bucket.input + bucket.output,
+                  measurementKind: 'period',
+                  periodStart: bucket.periodStart,
+                  periodEnd: bucket.periodEnd,
+                  source: 'api',
+                  fetchedAt: bucket.periodStart,
+                  windowLabel: 'daily usage report',
+                }))
+              : [],
           snapshot: snap({
+            fetchedAt,
             costUsd: null,
             inputTokens: input,
             outputTokens: output,
@@ -248,18 +462,28 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
             periodStart,
             periodEnd,
             source: 'api',
-            windowLabel: 'last 30 days (usage report)',
+            windowLabel: 'last 90 days (usage report)',
           }),
         };
       }
 
       const nextPage = data.next_page;
-      if (!nextPage || seenPages.has(nextPage)) break;
+      if (!nextPage || seenPages.has(nextPage)) {
+        throw new IncompleteAnthropicReportError();
+      }
       seenPages.add(nextPage);
       params.set('page', nextPage);
     }
-  } catch {
-    // fall through
+    if (pageCount >= MAX_REPORT_PAGES) {
+      throw new IncompleteAnthropicReportError();
+    }
+  } catch (error) {
+    if (error instanceof IncompleteAnthropicReportError) {
+      return {
+        ok: false,
+        message: 'Anthropic usage history request did not complete. Existing history was kept.',
+      };
+    }
   }
 
   // Validate with models list only — never call /messages (would spend tokens).

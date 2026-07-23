@@ -37,7 +37,7 @@ interface Props {
   onOpenProvider: (id: string) => void;
 }
 
-const RANGES: ChartRange[] = [7, 14, 30];
+const RANGES: ChartRange[] = [7, 14, 30, 90];
 
 export function DashboardScreen({
   onOpenPrivacy,
@@ -153,7 +153,7 @@ export function DashboardScreen({
       </View>
 
       <View style={styles.rangeRow}>
-        <Text style={[styles.sectionTitle, { color: t.text }]}>Usage over time</Text>
+        <Text style={[styles.sectionTitle, { color: t.text }]}>History</Text>
         <View style={styles.rangeTabs}>
           {RANGES.map((r) => {
             const on = r === range;
@@ -190,7 +190,7 @@ export function DashboardScreen({
         title="Timeline"
         subtitle={
           series.hasData
-            ? `Cumulative spend Δ ${formatUsd(series.totalCostDelta)} · token Δ ${formatTokens(series.totalTokenDelta)}`
+            ? `${range}-day spend ${formatUsd(series.totalCostDelta)} · tokens ${formatTokens(series.totalTokenDelta)}`
             : 'Local history builds as you refresh or log snapshots'
         }
         color={t.accent}
@@ -322,10 +322,10 @@ const styles = StyleSheet.create({
   },
   rangeTabs: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 4,
   },
   rangeTab: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 6,
     borderWidth: 1,
   },

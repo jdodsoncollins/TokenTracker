@@ -21,10 +21,10 @@ import {
   wipeAllCredentials,
 } from '../services/secureCredentials';
 import {
-  appendUsageHistory,
   clearAllLocalData,
   loadProviders,
   loadUsageHistory,
+  mergeUsageHistory,
   removeHistoryForProvider,
   saveProviders,
   type UsageHistoryEntry,
@@ -121,9 +121,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const recordHistory = useCallback(async (entry: UsageHistoryEntry) => {
-    await appendUsageHistory(entry);
-    setHistory((prev) => [entry, ...prev].slice(0, 500));
+  const recordHistory = useCallback(async (entries: UsageHistoryEntry[]) => {
+    const merged = await mergeUsageHistory(entries);
+    setHistory(merged);
   }, []);
 
   const addProvider = useCallback(
@@ -161,8 +161,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             input.apiKey.trim(),
             config.baseUrl,
           );
-          if (hasUsageMetrics(result.snapshot)) {
-            await recordHistory({ providerId: id, snapshot: result.snapshot });
+          if (result.history !== undefined) {
+            await recordHistory(
+              result.history.map((snapshot) => ({ providerId: id, snapshot })),
+            );
+          } else if (hasUsageMetrics(result.snapshot)) {
+            await recordHistory([{ providerId: id, snapshot: result.snapshot }]);
           }
           await updateProviders((current) =>
             current.map((p) =>
@@ -236,8 +240,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { ok: false, message: 'No credential stored.' };
         }
         const result = await fetchProviderUsage(provider.kind, key, provider.baseUrl);
-        if (hasUsageMetrics(result.snapshot)) {
-          await recordHistory({ providerId: id, snapshot: result.snapshot });
+        if (result.history !== undefined) {
+          await recordHistory(
+            result.history.map((snapshot) => ({ providerId: id, snapshot })),
+          );
+        } else if (hasUsageMetrics(result.snapshot)) {
+          await recordHistory([{ providerId: id, snapshot: result.snapshot }]);
         }
         await updateProviders((current) =>
           current.map((p) =>
@@ -293,7 +301,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
     ) => {
       const snapshot = createManualSnapshot(input);
-      await recordHistory({ providerId: id, snapshot });
+      await recordHistory([{ providerId: id, snapshot }]);
       await updateProviders((current) =>
         current.map((p) =>
           p.id === id

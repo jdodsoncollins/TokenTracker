@@ -8,6 +8,8 @@ import type { ProviderConfig, UsageSnapshot } from '../types';
 
 const PROVIDERS_KEY = 'tt_providers_v1';
 const HISTORY_KEY = 'tt_usage_history_v1';
+// 2,000 entries retain 90 daily buckets for more than 20 provider entries.
+const HISTORY_LIMIT = 2_000;
 let historyMutation = Promise.resolve();
 
 export interface UsageHistoryEntry {
@@ -85,14 +87,78 @@ export async function loadUsageHistory(): Promise<UsageHistoryEntry[]> {
   });
 }
 
-export async function appendUsageHistory(entry: UsageHistoryEntry): Promise<void> {
-  await runHistoryMutation(async () => {
+function historyIdentity(entry: UsageHistoryEntry): string {
+  const { snapshot } = entry;
+  if (
+    snapshot.source === 'api' &&
+    snapshot.measurementKind === 'period' &&
+    snapshot.periodStart &&
+    snapshot.periodEnd
+  ) {
+    return `${entry.providerId}:period:${snapshot.periodStart}:${snapshot.periodEnd}`;
+  }
+  return `${entry.providerId}:fetched:${snapshot.fetchedAt}`;
+}
+
+function mergeSnapshot(
+  refreshed: UsageSnapshot,
+  existing: UsageSnapshot,
+): UsageSnapshot {
+  const inputTokens = refreshed.inputTokens ?? existing.inputTokens;
+  const outputTokens = refreshed.outputTokens ?? existing.outputTokens;
+  const totalTokens =
+    inputTokens != null || outputTokens != null
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : (refreshed.totalTokens ?? existing.totalTokens);
+  return {
+    ...existing,
+    ...refreshed,
+    costUsd: refreshed.costUsd ?? existing.costUsd,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  };
+}
+
+function historyTime(entry: UsageHistoryEntry): number {
+  const periodStart = Date.parse(entry.snapshot.periodStart ?? '');
+  if (Number.isFinite(periodStart)) return periodStart;
+  const fetchedAt = Date.parse(entry.snapshot.fetchedAt);
+  return Number.isFinite(fetchedAt) ? fetchedAt : 0;
+}
+
+export async function mergeUsageHistory(
+  entries: UsageHistoryEntry[],
+): Promise<UsageHistoryEntry[]> {
+  return runHistoryMutation(async () => {
     const history = await loadUsageHistory();
-    history.unshift(entry);
-    // Cap local history so the device stays lean.
-    const trimmed = history.slice(0, 500);
+    const merged = new Map<string, UsageHistoryEntry>();
+    for (const entry of history) {
+      const identity = historyIdentity(entry);
+      if (!merged.has(identity)) merged.set(identity, entry);
+    }
+    for (const entry of entries) {
+      const identity = historyIdentity(entry);
+      const existing = merged.get(identity);
+      merged.set(
+        identity,
+        existing
+          ? { ...entry, snapshot: mergeSnapshot(entry.snapshot, existing.snapshot) }
+          : entry,
+      );
+    }
+    const trimmed = Array.from(merged.values())
+      .sort((a, b) => historyTime(b) - historyTime(a))
+      .slice(0, HISTORY_LIMIT);
     await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+    return trimmed;
   });
+}
+
+export async function appendUsageHistory(
+  entry: UsageHistoryEntry,
+): Promise<UsageHistoryEntry[]> {
+  return mergeUsageHistory([entry]);
 }
 
 export async function removeHistoryForProvider(providerId: string): Promise<void> {

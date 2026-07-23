@@ -41,7 +41,9 @@ Those providers receive the API requests and apply their own privacy policies. T
 
 ## How usage is measured
 
-TokenTracker stores each provider result or manual entry as a local snapshot. Cumulative readings carry forward and produce deltas only against compatible cumulative readings. Period and point readings appear only on the day observed. TokenTracker does not combine readings with different measurement windows.
+TokenTracker stores each provider result or manual entry as a local snapshot. OpenAI admin credentials can return up to 90 days of daily organization costs and completion tokens. OpenAI costs include all billed API capabilities, while token counts cover only the completions usage endpoint. Anthropic admin credentials return daily message token usage. Other providers may return a current reading or no usage history. Cumulative readings carry forward and produce deltas only against compatible cumulative readings. Daily API periods use the provider-reported date. Other period and point readings appear only on the day observed. TokenTracker does not combine readings with different measurement windows.
+
+One admin credential covers its OpenAI organization or Anthropic account. Adding multiple admin credentials from the same organization or account duplicates totals. Use separate provider entries for separate organizations or accounts. Regular OpenAI project keys and Anthropic standard keys cannot query organization or account reports.
 
 Provider-reported cost takes precedence. If a snapshot contains tokens but no cost, TokenTracker estimates cost only when you explicitly select a model. The estimate uses that model's configured rates and remains labelled as an estimate.
 

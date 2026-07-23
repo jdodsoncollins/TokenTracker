@@ -8,7 +8,7 @@ import type { ProviderConfig } from '../src/types';
 
 const mocks = vi.hoisted(() => ({
   saveProviders: vi.fn(),
-  appendUsageHistory: vi.fn(),
+  mergeUsageHistory: vi.fn(async (entries) => entries),
   fetchProviderUsage: vi.fn(),
 }));
 
@@ -39,7 +39,7 @@ vi.mock('../src/services/storage', () => ({
   loadProviders: vi.fn(async () => initialProviders),
   loadUsageHistory: vi.fn(async () => []),
   saveProviders: mocks.saveProviders,
-  appendUsageHistory: mocks.appendUsageHistory,
+  mergeUsageHistory: mocks.mergeUsageHistory,
   removeHistoryForProvider: vi.fn(),
   clearAllLocalData: vi.fn(),
 }));
@@ -110,5 +110,79 @@ describe('AppProvider', () => {
         expect.objectContaining({ id: 'xai-id', lastUsage: expect.any(Object) }),
       ]),
     );
+  });
+
+  it('records daily history without adding the aggregate snapshot', async () => {
+    const aggregate = {
+      costUsd: 30,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      measurementKind: 'period' as const,
+      periodStart: '2026-06-23T00:00:00.000Z',
+      periodEnd: '2026-07-23T00:00:00.000Z',
+      source: 'api' as const,
+      fetchedAt: '2026-07-23T01:00:00.000Z',
+    };
+    const daily = {
+      ...aggregate,
+      costUsd: 1,
+      periodStart: '2026-07-22T00:00:00.000Z',
+      periodEnd: '2026-07-23T00:00:00.000Z',
+    };
+    mocks.fetchProviderUsage.mockResolvedValueOnce({
+      ok: true,
+      snapshot: aggregate,
+      history: [daily],
+    });
+
+    await act(async () => {
+      create(
+        <AppProvider>
+          <CaptureContext />
+        </AppProvider>,
+      );
+    });
+    await act(async () => {
+      await current?.refreshProvider('openai-id');
+    });
+
+    expect(mocks.mergeUsageHistory).toHaveBeenCalledWith([
+      { providerId: 'openai-id', snapshot: daily },
+    ]);
+    expect(
+      current?.providers.find((provider) => provider.id === 'openai-id')?.lastUsage,
+    ).toEqual(aggregate);
+  });
+
+  it('does not add an aggregate snapshot when a completed report is empty', async () => {
+    mocks.fetchProviderUsage.mockResolvedValueOnce({
+      ok: true,
+      snapshot: {
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        measurementKind: 'period',
+        periodStart: '2026-04-24T00:00:00.000Z',
+        periodEnd: '2026-07-23T00:00:00.000Z',
+        source: 'api',
+        fetchedAt: '2026-07-23T00:00:00.000Z',
+      },
+      history: [],
+    });
+
+    await act(async () => {
+      create(
+        <AppProvider>
+          <CaptureContext />
+        </AppProvider>,
+      );
+    });
+    await act(async () => {
+      await current?.refreshProvider('openai-id');
+    });
+
+    expect(mocks.mergeUsageHistory).toHaveBeenCalledWith([]);
   });
 });
