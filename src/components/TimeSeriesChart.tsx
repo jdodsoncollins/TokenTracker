@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { DayPoint } from '../services/analytics';
 import { getTheme, isMaterialChrome, spacing, typography } from '../theme/tokens';
@@ -63,6 +63,14 @@ export function TimeSeriesChart({
   }, [points, active]);
 
   const hasData = points.some((p) => (valueOf(p, active) ?? 0) > 0);
+
+  useEffect(() => {
+    if (metricProp || hasData) return;
+    const available = METRICS.find((candidate) =>
+      points.some((point) => (valueOf(point, candidate.id) ?? 0) > 0),
+    );
+    if (available) setMetric(available.id);
+  }, [hasData, metricProp, points]);
   const chartHeight = 140;
   const selectedPoint =
     selected != null && selected >= 0 && selected < points.length

@@ -10,10 +10,10 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderDefinition> = {
     accent: brand.providers.openai,
     description: 'GPT models and organization usage',
     docsUrl: 'https://platform.openai.com/api-keys',
-    keyHint: 'sk-… or sk-admin-… (admin keys can fetch org costs)',
+    keyHint: 'sk-… or sk-admin-… (admin keys can fetch org usage)',
     supportsAutoUsage: true,
     usageHint:
-      'Organization cost endpoints need an admin API key. Regular project keys can still be validated and used with manual snapshots.',
+      'Organization cost and token usage endpoints need an admin API key. Regular project keys can still be validated and used with manual snapshots.',
   },
   anthropic: {
     kind: 'anthropic',

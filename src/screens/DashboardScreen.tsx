@@ -74,9 +74,10 @@ export function DashboardScreen({
     const active = estimateRows.filter((row) => row.tokens != null);
     const key = active[0]?.comparabilityKey ?? null;
     const comparable =
-      active.length > 0 &&
-      key != null &&
-      active.every((row) => row.comparabilityKey === key);
+      active.length === 1 ||
+      (active.length > 1 &&
+        key != null &&
+        active.every((row) => row.comparabilityKey === key));
     return {
       total: comparable
         ? active.reduce((sum, row) => sum + (row.tokens ?? 0), 0)

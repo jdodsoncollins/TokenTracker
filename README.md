@@ -32,7 +32,7 @@ Full details: [PRIVACY.md](./PRIVACY.md)
 
 - **Multi-provider**: OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, and custom bases
 - **Native secure storage**: Keychain / Keystore through `expo-secure-store`
-- **Auto usage** where the provider allows, such as OpenRouter key usage and OpenAI organization costs with admin keys
+- **Auto usage** where the provider allows, such as OpenRouter key usage and OpenAI organization costs and tokens with admin keys
 - **Manual snapshots** when auto usage is unavailable
 - **Usage charts**: 7 / 14 / 30 day timelines from local history
 - **Cost estimates**: provider-reported costs take precedence; token-based estimates require an explicit model and use its configured rates
@@ -70,7 +70,7 @@ Cumulative readings carry forward and produce deltas only against a compatible c
 
 | Provider | Auto usage | Notes |
 |----------|------------|--------|
-| OpenAI | Org costs with **admin** key | Project keys validate; use manual spend if needed |
+| OpenAI | Org costs and tokens with **admin** key | Project keys validate; manual snapshots remain visible after refresh |
 | Anthropic | Usage report with **admin** access | Standard keys validate; manual otherwise |
 | xAI (Grok) | Key validation | Manual cost snapshots supported |
 | OpenRouter | Lifetime USD on key endpoint | Best out-of-the-box auto usage |

@@ -87,6 +87,40 @@ describe('fetchProviderUsage', () => {
     expect(res.snapshot?.costUsd).toBe(5);
   });
 
+  it('OpenAI admin keys return organization costs and token usage', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('/organization/costs')) {
+          return jsonResponse({
+            data: [{ results: [{ amount: { value: 68.46 } }] }],
+          });
+        }
+        if (String(url).includes('/organization/usage/completions')) {
+          return jsonResponse({
+            data: [
+              {
+                results: [
+                  { input_tokens: 132_263_627, output_tokens: 421 },
+                ],
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      }),
+    );
+
+    const res = await fetchProviderUsage('openai', 'sk-admin');
+    expect(res.snapshot).toMatchObject({
+      costUsd: 68.46,
+      inputTokens: 132_263_627,
+      outputTokens: 421,
+      totalTokens: 132_264_048,
+      measurementKind: 'period',
+    });
+  });
+
   it('OpenAI rejects bad keys', async () => {
     vi.stubGlobal(
       'fetch',

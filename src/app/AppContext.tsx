@@ -30,6 +30,10 @@ import {
   type UsageHistoryEntry,
 } from '../services/storage';
 import { createId } from '../utils/format';
+import {
+  hasUsageMetrics,
+  restoreLatestUsage,
+} from '../services/usageSnapshots';
 
 interface AppState {
   ready: boolean;
@@ -88,9 +92,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await migrateCredentialStorage(
           loaded.filter((provider) => provider.hasCredential).map((provider) => provider.id),
         );
-        providersRef.current = loaded;
-        setProviders(loaded);
+        const restored = restoreLatestUsage(loaded, hist);
+        providersRef.current = restored;
+        setProviders(restored);
         setHistory(hist);
+        if (restored.some((provider, index) => provider !== loaded[index])) {
+          await saveProviders(restored);
+        }
       } catch (e) {
         setGlobalError(e instanceof Error ? e.message : 'Failed to load local data');
       } finally {
@@ -153,7 +161,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             input.apiKey.trim(),
             config.baseUrl,
           );
-          if (result.snapshot) {
+          if (hasUsageMetrics(result.snapshot)) {
             await recordHistory({ providerId: id, snapshot: result.snapshot });
           }
           await updateProviders((current) =>
@@ -162,7 +170,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ? {
                     ...p,
                     updatedAt: new Date().toISOString(),
-                    lastUsage: result.snapshot ?? p.lastUsage ?? null,
+                    lastUsage: hasUsageMetrics(result.snapshot)
+                      ? result.snapshot ?? null
+                      : p.lastUsage ?? null,
                     lastError: result.ok
                       ? null
                       : result.message ?? 'Refresh failed',
@@ -226,7 +236,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { ok: false, message: 'No credential stored.' };
         }
         const result = await fetchProviderUsage(provider.kind, key, provider.baseUrl);
-        if (result.snapshot) {
+        if (hasUsageMetrics(result.snapshot)) {
           await recordHistory({ providerId: id, snapshot: result.snapshot });
         }
         await updateProviders((current) =>
@@ -234,7 +244,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             p.id === id
               ? {
                   ...p,
-                  lastUsage: result.snapshot ?? p.lastUsage ?? null,
+                  lastUsage: hasUsageMetrics(result.snapshot)
+                    ? result.snapshot ?? null
+                    : p.lastUsage ?? null,
                   lastError: result.ok ? null : result.message ?? 'Refresh failed',
                   updatedAt: new Date().toISOString(),
                   hasCredential: true,

@@ -2,6 +2,7 @@ import type { ProviderConfig, ProviderKind, UsageSnapshot } from '../types';
 import type { UsageHistoryEntry } from './storage';
 import { resolveCostUsd } from './pricing';
 import { PROVIDER_CATALOG } from './providers/catalog';
+import { hasUsageMetrics } from './usageSnapshots';
 
 export type ChartRange = 7 | 14 | 30;
 
@@ -216,8 +217,10 @@ export function buildTimeSeries(
         const key = toLocalDateKey(when);
         if (key > day) break;
         const snap = list[idx].snapshot;
-        if (key === day) observedToday = snap;
-        cumulative = snap.measurementKind === 'cumulative' ? snap : null;
+        if (key === day && hasUsageMetrics(snap)) observedToday = snap;
+        if (snap.measurementKind === 'cumulative' && hasUsageMetrics(snap)) {
+          cumulative = snap;
+        }
         idx += 1;
       }
       const reading = observedToday ?? cumulative;
@@ -244,7 +247,13 @@ export function buildTimeSeries(
     let previousCumulative: UsageSnapshot | null = null;
     for (const cur of list) {
       const when = parseIso(cur.snapshot.fetchedAt);
-      if (!when || cur.snapshot.measurementKind !== 'cumulative') continue;
+      if (
+        !when ||
+        cur.snapshot.measurementKind !== 'cumulative' ||
+        !hasUsageMetrics(cur.snapshot)
+      ) {
+        continue;
+      }
       if (!previousCumulative || !sameCumulativeSeries(previousCumulative, cur.snapshot)) {
         previousCumulative = cur.snapshot;
         continue;
@@ -359,9 +368,10 @@ export function sumDisplayCost(rows: CostEstimateRow[]): {
   const active = rows.filter((row) => row.displayCost != null);
   const key = active[0]?.comparabilityKey ?? null;
   const comparable =
-    active.length > 0 &&
-    key != null &&
-    active.every((row) => row.comparabilityKey === key);
+    active.length === 1 ||
+    (active.length > 1 &&
+      key != null &&
+      active.every((row) => row.comparabilityKey === key));
   if (!comparable) {
     return {
       total: null,

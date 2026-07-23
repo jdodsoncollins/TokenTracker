@@ -113,6 +113,43 @@ describe('buildTimeSeries', () => {
     expect(series.projectedMonthlyCost).toBeNull();
   });
 
+  it('does not let a validation-only refresh hide a manual reading', () => {
+    const series = buildTimeSeries(
+      [
+        {
+          providerId: 'p1',
+          snapshot: {
+            costUsd: 68.46,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            measurementKind: 'point',
+            source: 'manual',
+            fetchedAt: '2026-07-10T10:00:00.000Z',
+          },
+        },
+        {
+          providerId: 'p1',
+          snapshot: {
+            costUsd: null,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            measurementKind: 'point',
+            source: 'api',
+            fetchedAt: '2026-07-10T11:00:00.000Z',
+          },
+        },
+      ],
+      [provider],
+      7,
+      new Date('2026-07-10T18:00:00.000Z'),
+    );
+
+    expect(series.latestCostLevel).toBe(68.46);
+    expect(series.hasData).toBe(true);
+  });
+
   it('returns empty-ish series without history', () => {
     const series = buildTimeSeries([], [], 7, new Date('2026-07-10T00:00:00Z'));
     expect(series.hasData).toBe(false);
@@ -126,7 +163,7 @@ describe('cost estimates', () => {
     expect(rows[0].isEstimate).toBe(true);
     expect(rows[0].displayCost).toBeGreaterThan(0);
     const sum = sumDisplayCost(rows);
-    expect(sum.total).toBeNull();
-    expect(sum.comparable).toBe(false);
+    expect(sum.total).toBe(rows[0].displayCost);
+    expect(sum.comparable).toBe(true);
   });
 });

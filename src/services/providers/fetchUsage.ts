@@ -53,14 +53,15 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
   // Costs API (organization admin keys)
   const end = Math.floor(Date.now() / 1000);
   const start = end - 30 * 24 * 60 * 60;
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
   try {
     const costsRes = await providerFetch(
       `https://api.openai.com/v1/organization/costs?start_time=${start}&end_time=${end}&bucket_width=1d&limit=31`,
       {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers,
       },
     );
     if (costsRes.ok) {
@@ -79,19 +80,58 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
           total += nonnegativeNumber(r.amount?.value) ?? 0;
         }
       }
+      let inputTokens: number | null = null;
+      let outputTokens: number | null = null;
+      try {
+        const usageRes = await providerFetch(
+          `https://api.openai.com/v1/organization/usage/completions?start_time=${start}&end_time=${end}&bucket_width=1d&limit=31`,
+          { headers },
+        );
+        if (usageRes.ok) {
+          const usage = (await safeJson(usageRes)) as {
+            data?: Array<{
+              results?: Array<{
+                input_tokens?: number;
+                output_tokens?: number;
+              }>;
+            }>;
+          } | null;
+          if (
+            Array.isArray(usage?.data) &&
+            usage.data.every((bucket) => Array.isArray(bucket.results))
+          ) {
+            inputTokens = 0;
+            outputTokens = 0;
+            for (const bucket of usage.data) {
+              for (const result of bucket.results ?? []) {
+                inputTokens += nonnegativeNumber(result.input_tokens) ?? 0;
+                outputTokens += nonnegativeNumber(result.output_tokens) ?? 0;
+              }
+            }
+          }
+        }
+      } catch {
+        // Cost remains useful when the separate token report is unavailable.
+      }
       return {
         ok: true,
         validated: true,
         snapshot: snap({
           costUsd: total,
-          inputTokens: null,
-          outputTokens: null,
-          totalTokens: null,
+          inputTokens,
+          outputTokens,
+          totalTokens:
+            inputTokens != null && outputTokens != null
+              ? inputTokens + outputTokens
+              : null,
           measurementKind: 'period',
           periodStart: new Date(start * 1000).toISOString(),
           periodEnd: new Date(end * 1000).toISOString(),
           source: 'api',
-          windowLabel: 'last 30 days (org costs)',
+          windowLabel:
+            inputTokens != null
+              ? 'last 30 days (organization costs and usage)'
+              : 'last 30 days (organization costs)',
         }),
       };
     }
@@ -107,7 +147,7 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
       ok: true,
       validated: true,
       message:
-        'Key works. Cost auto-fetch needs an organization admin key — add a manual snapshot for spend.',
+        'Key works. Automatic spend and token usage require an organization admin key. Manual snapshots remain visible after refresh.',
       snapshot: snap({
         costUsd: null,
         inputTokens: null,
@@ -116,7 +156,7 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
         measurementKind: 'point',
         source: 'api',
         windowLabel: 'key validated · costs unavailable',
-        note: 'Use manual entry or an sk-admin key for org costs.',
+        note: 'Use manual entry or an organization admin key for automatic usage.',
       }),
     };
   }
