@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import React, { type ReactNode } from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderConfig } from '../src/types';

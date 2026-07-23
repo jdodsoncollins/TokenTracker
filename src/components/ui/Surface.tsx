@@ -130,7 +130,7 @@ const styles = StyleSheet.create({
     height: '55%',
   },
   glassInnerBorder: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.08)',
   },

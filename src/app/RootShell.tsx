@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(18, 24, 38, 0.45)',
   },
   floatingRim: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.1)',
     borderRadius: 28,
