@@ -52,9 +52,16 @@ describe('storage', () => {
     expect(raw).not.toContain('sk-secret');
   });
 
-  it('returns empty array for corrupt provider JSON', async () => {
+  it('surfaces corrupt provider JSON', async () => {
     store.set('tt_providers_v1', '{not-json');
-    expect(await loadProviders()).toEqual([]);
+    await expect(loadProviders()).rejects.toThrow('provider data is corrupted');
+  });
+
+  it('surfaces corrupt usage history', async () => {
+    store.set('tt_usage_history_v1', JSON.stringify([{ providerId: 'p1' }]));
+    await expect(loadUsageHistory()).rejects.toThrow(
+      'usage history data is corrupted',
+    );
   });
 
   it('appends usage history and caps at 500', async () => {
@@ -76,6 +83,28 @@ describe('storage', () => {
     expect(hist.length).toBe(500);
     // newest first
     expect(hist[0].snapshot.costUsd).toBe(504);
+  });
+
+  it('serializes concurrent usage history writes', async () => {
+    const entry = (providerId: string) => ({
+      providerId,
+      snapshot: {
+        costUsd: 1,
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        source: 'manual' as const,
+        fetchedAt: '2026-07-01T00:00:00.000Z',
+      },
+    });
+    await Promise.all([
+      appendUsageHistory(entry('p1')),
+      appendUsageHistory(entry('p2')),
+    ]);
+    expect((await loadUsageHistory()).map((item) => item.providerId).sort()).toEqual([
+      'p1',
+      'p2',
+    ]);
   });
 
   it('removes history for a provider', async () => {

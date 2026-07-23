@@ -89,22 +89,33 @@ export const MODEL_RATES: Record<string, ModelRate> = {
   },
 };
 
-/** Default estimate model per provider kind. */
-export const DEFAULT_MODEL_BY_KIND: Record<ProviderKind, string> = {
-  openai: 'gpt-4o-mini',
-  anthropic: 'claude-sonnet',
-  xai: 'grok-3-mini',
-  openrouter: 'openrouter-blend',
-  google: 'gemini-2.0-flash',
-  custom: 'generic',
+const MODEL_IDS_BY_KIND: Record<ProviderKind, string[]> = {
+  openai: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
+  anthropic: ['claude-sonnet', 'claude-haiku', 'claude-opus'],
+  xai: ['grok-3', 'grok-3-mini'],
+  openrouter: [
+    'openrouter-blend',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o3-mini',
+    'claude-sonnet',
+    'claude-haiku',
+    'claude-opus',
+    'grok-3',
+    'grok-3-mini',
+    'gemini-2.0-flash',
+    'gemini-2.5-pro',
+  ],
+  google: ['gemini-2.0-flash', 'gemini-2.5-pro'],
+  custom: ['generic'],
 };
 
-export function getModelRate(modelId: string): ModelRate {
-  return MODEL_RATES[modelId] ?? MODEL_RATES.generic;
+export function getModelRate(modelId: string): ModelRate | null {
+  return MODEL_RATES[modelId] ?? null;
 }
 
-export function defaultModelForKind(kind: ProviderKind): ModelRate {
-  return getModelRate(DEFAULT_MODEL_BY_KIND[kind]);
+export function modelRatesForProvider(kind: ProviderKind): ModelRate[] {
+  return MODEL_IDS_BY_KIND[kind].map((id) => MODEL_RATES[id]);
 }
 
 /**
@@ -117,11 +128,10 @@ export function estimateCostFromTokens(input: {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
-  modelId?: string;
+  modelId: string;
 }): { costUsd: number; model: ModelRate; assumedSplit: boolean } {
-  const model = input.modelId
-    ? getModelRate(input.modelId)
-    : defaultModelForKind(input.kind);
+  const model = getModelRate(input.modelId);
+  if (!model) throw new Error(`Unknown pricing model: ${input.modelId}`);
 
   let inTok = input.inputTokens ?? null;
   let outTok = input.outputTokens ?? null;
@@ -153,8 +163,10 @@ export function resolveCostUsd(input: {
   isEstimate: boolean;
   modelLabel?: string;
 } {
-  if (input.costUsd != null && !Number.isNaN(input.costUsd)) {
-    return { value: input.costUsd, isEstimate: false };
+  if (input.costUsd != null) {
+    return Number.isFinite(input.costUsd) && input.costUsd >= 0
+      ? { value: input.costUsd, isEstimate: false }
+      : { value: null, isEstimate: false };
   }
   const hasTokens =
     input.inputTokens != null ||
@@ -163,7 +175,11 @@ export function resolveCostUsd(input: {
   if (!hasTokens) {
     return { value: null, isEstimate: false };
   }
-  const est = estimateCostFromTokens(input);
+  const modelId = input.modelId;
+  if (!modelId || !getModelRate(modelId)) {
+    return { value: null, isEstimate: false };
+  }
+  const est = estimateCostFromTokens({ ...input, modelId });
   if (est.costUsd <= 0) {
     return { value: 0, isEstimate: true, modelLabel: est.model.label };
   }
@@ -171,5 +187,68 @@ export function resolveCostUsd(input: {
     value: est.costUsd,
     isEstimate: true,
     modelLabel: est.model.label,
+  };
+}
+
+export interface ManualUsageFormInput {
+  costUsd: string;
+  inputTokens: string;
+  outputTokens: string;
+  modelId: string;
+}
+
+export type ValidManualUsage = {
+  costUsd: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  modelId?: string;
+};
+
+/** Parse manual form values without allowing NaN, infinity, negatives, or fractions. */
+export function validateManualUsageInput(
+  input: ManualUsageFormInput,
+): { value?: ValidManualUsage; error?: string } {
+  const costText = input.costUsd.trim();
+  const inputText = input.inputTokens.trim();
+  const outputText = input.outputTokens.trim();
+
+  if (!costText && !inputText && !outputText) {
+    return { error: 'Enter a cost or at least one token count.' };
+  }
+
+  const costUsd = costText ? Number(costText) : null;
+  if (costUsd != null && (!Number.isFinite(costUsd) || costUsd < 0)) {
+    return { error: 'Cost must be a finite, nonnegative number.' };
+  }
+
+  const parseTokens = (text: string): number | null =>
+    text ? Number(text) : null;
+  const inputTokens = parseTokens(inputText);
+  const outputTokens = parseTokens(outputText);
+  if (
+    [inputTokens, outputTokens].some(
+      (value) =>
+        value != null &&
+        (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)),
+    )
+  ) {
+    return { error: 'Token counts must be finite, nonnegative whole numbers.' };
+  }
+
+  const needsEstimate = costUsd == null && (inputTokens != null || outputTokens != null);
+  if (needsEstimate && !input.modelId) {
+    return { error: 'Select a pricing model to estimate token cost.' };
+  }
+  if (input.modelId && !getModelRate(input.modelId)) {
+    return { error: 'Select a valid pricing model.' };
+  }
+
+  return {
+    value: {
+      costUsd,
+      inputTokens,
+      outputTokens,
+      modelId: needsEstimate ? input.modelId : undefined,
+    },
   };
 }

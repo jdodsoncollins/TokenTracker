@@ -7,6 +7,7 @@ export type ProviderKind =
   | 'custom';
 
 export type UsageSource = 'api' | 'manual' | 'unknown';
+export type MeasurementKind = 'cumulative' | 'period' | 'point';
 
 export interface UsageSnapshot {
   /** Estimated or reported spend in USD for the current window. */
@@ -19,6 +20,13 @@ export interface UsageSnapshot {
   totalTokens: number | null;
   /** Optional free-form note (e.g. "March 2026 MTD"). */
   note?: string;
+  /** Missing on legacy data means unknown, never cumulative. */
+  measurementKind?: MeasurementKind;
+  /** ISO boundaries for period readings or bounded cumulative readings. */
+  periodStart?: string;
+  periodEnd?: string;
+  /** Explicit pricing model used when cost is estimated from tokens. */
+  modelId?: string;
   source: UsageSource;
   fetchedAt: string;
   /** Human-readable window, e.g. "last 30 days". */

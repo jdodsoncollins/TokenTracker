@@ -14,7 +14,7 @@ export function PrivacyBanner({ onPress, compact }: Props) {
     <Pressable
       onPress={onPress}
       accessibilityRole={onPress ? 'button' : 'text'}
-      accessibilityLabel="Privacy: zero usage is ever recorded by TokenTracker"
+      accessibilityLabel="Privacy: TokenTracker has no backend or telemetry"
     >
       <Surface
         variant="card"
@@ -33,14 +33,13 @@ export function PrivacyBanner({ onPress, compact }: Props) {
             </Text>
             {!compact && (
               <Text style={[styles.body, { color: t.textSecondary }]}>
-                TokenTracker never records your usage. Keys stay encrypted on this
-                device. The only network calls are direct HTTPS to the providers you
-                add.
+                Usage stays local. Native keys use OS secure storage. Provider calls
+                go directly to the provider you select.
               </Text>
             )}
             {compact && (
               <Text style={[styles.body, { color: t.textSecondary }]}>
-                Your data never leaves this device via us.
+                TokenTracker receives no usage or credentials.
               </Text>
             )}
           </View>

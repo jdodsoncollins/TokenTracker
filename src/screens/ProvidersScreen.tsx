@@ -81,8 +81,9 @@ export function ProvidersScreen({ onOpenProvider }: Props) {
         />
       </View>
       <Text style={[styles.subtitle, { color: t.textSecondary }]}>
-        Credentials are encrypted offline with the OS secure store. They are never
-        written to git, analytics, or any TokenTracker server (there isn’t one).
+        Native credentials persist in OS secure storage without biometric authentication.
+        Web credentials stay in memory and disappear on reload. TokenTracker has no backend
+        or telemetry.
       </Text>
 
       {showForm && (
@@ -184,11 +185,15 @@ export function ProvidersScreen({ onOpenProvider }: Props) {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
+              <Text style={[styles.hint, { color: t.textSecondary }]}>
+                HTTPS is required except for localhost and 127.0.0.1 during local
+                development.
+              </Text>
             </>
           )}
 
           <PrimaryButton
-            label="Save encrypted key"
+            label="Save and validate"
             onPress={onSubmit}
             loading={busy}
             style={{ marginTop: spacing.md }}

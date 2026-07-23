@@ -1,52 +1,61 @@
-# Privacy Policy — TokenTracker
+# Privacy Policy: TokenTracker
 
-**Last updated:** 2026-07-18
+**Last updated:** 2026-07-23
 
 TokenTracker is a **local-first** mobile app. This document is intentionally short and literal.
 
-## Zero usage recorded by the project
+## TokenTracker receives no usage
 
 **TokenTracker does not operate servers that receive your usage data.**
 
-- No analytics or product telemetry
-- No crash-reporting that uploads prompts or API keys
+- No analytics, product telemetry, or TokenTracker backend
+- No crash reporting
 - No user accounts
-- No cloud sync
+- No built-in cloud sync
 - No advertising identifiers
 
-If you never install third-party forks that change this behavior, **zero usage is ever recorded** by TokenTracker itself.
+The app records usage snapshots on your device. TokenTracker receives none of that usage, and it receives no prompts or provider response bodies.
 
 ## What is stored on your device
 
 | Data | Storage | Notes |
 |------|---------|--------|
-| API keys | OS secure store (Keychain / Keystore) via `expo-secure-store` | Encrypted by the platform; not in git |
-| Provider labels & usage snapshots | AsyncStorage (on device) | Non-secret metadata only |
-| Web (dev) keys | AES-GCM with a local master key | For browser development only |
+| Native API keys | OS secure storage (Keychain / Keystore) through `expo-secure-store` | Persisted by the platform; no biometric authentication; not necessarily stored in secure enclave hardware |
+| Provider labels and usage snapshots | AsyncStorage | Usage metadata stored on the device |
+| Web API keys | Process memory | Disappear when the page reloads |
+
+Android backup is disabled for TokenTracker. iOS and other platform-managed device backups may include AsyncStorage usage metadata, so a platform backup can create a cloud copy of that metadata.
 
 ## What leaves the device
 
-Only **HTTPS requests you initiate** to the LLM providers you configure:
+**Save and validate** and **Refresh** send your key directly to the selected provider. TokenTracker sends no request through a TokenTracker server. Custom endpoints require HTTPS, except `http://localhost` and `http://127.0.0.1` during local development.
 
 - OpenAI (`api.openai.com`)
 - Anthropic (`api.anthropic.com`)
 - xAI (`api.x.ai`)
 - OpenRouter (`openrouter.ai`)
 - Google AI (`generativelanguage.googleapis.com`)
-- Any custom base URL you enter
+- A custom base URL you enter
 
-Those providers have their own privacy policies. TokenTracker is not a proxy and does not sit in the middle.
+Those providers receive the API requests and apply their own privacy policies. TokenTracker has no proxy. The app processes provider response bodies locally and does not send them, or your prompts, to TokenTracker.
+
+## How usage is measured
+
+TokenTracker stores each provider result or manual entry as a local snapshot. Cumulative readings carry forward and produce deltas only against compatible cumulative readings. Period and point readings appear only on the day observed. TokenTracker does not combine readings with different measurement windows.
+
+Provider-reported cost takes precedence. If a snapshot contains tokens but no cost, TokenTracker estimates cost only when you explicitly select a model. The estimate uses that model's configured rates and remains labelled as an estimate.
 
 ## What we never collect
 
-- Prompts and completions (the app is not a chat client)
-- API keys (never transmitted to us — we have nowhere to send them)
+- Prompts and completions
+- API keys
+- Provider response bodies
 - Device advertising IDs
 - Location
 
 ## Deleting data
 
-Use **Privacy → Wipe all local data** in the app, or uninstall the app. That removes local keys and snapshots from that device.
+Use **Privacy → Wipe all local data** to remove local keys and snapshots. Uninstalling removes app data, but OS secure storage retention varies by platform.
 
 ## Open source
 

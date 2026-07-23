@@ -44,8 +44,15 @@ describe('resolveCostUsd', () => {
       kind: 'anthropic',
       inputTokens: 500_000,
       outputTokens: 100_000,
+      modelId: 'claude-sonnet',
     });
     expect(r.isEstimate).toBe(true);
     expect(r.value).toBeGreaterThan(0);
+  });
+
+  it('does not estimate without an explicit model', () => {
+    const r = resolveCostUsd({ kind: 'openai', inputTokens: 1_000_000 });
+    expect(r.value).toBeNull();
+    expect(r.isEstimate).toBe(false);
   });
 });

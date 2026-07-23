@@ -7,21 +7,13 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "tokentracker",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0B0F1A"
-    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.jdodsoncollins.tokentracker",
-      "infoPlist": {
-        "NSFaceIDUsageDescription": "TokenTracker can use biometrics to protect access to your encrypted API credentials stored on this device only."
-      }
+      "bundleIdentifier": "com.jdodsoncollins.tokentracker"
     },
     "android": {
       "package": "com.jdodsoncollins.tokentracker",
+      "allowBackup": false,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F1A",
         "foregroundImage": "./assets/adaptive-icon.png"
@@ -32,11 +24,20 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0F1A"
+        }
+      ],
+      "expo-status-bar"
     ],
     "extra": {
       "privacy": "zero-telemetry",
-      "dataPolicy": "Keys and usage stay on device. The app only talks to the LLM providers you configure — never to TokenTracker servers (there are none)."
+      "dataPolicy": "TokenTracker has no servers or telemetry. Native keys use OS secure storage; provider requests go directly to the provider you configure."
     }
   }
 }

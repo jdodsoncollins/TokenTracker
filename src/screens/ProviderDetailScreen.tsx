@@ -15,7 +15,11 @@ import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { Screen } from '../components/ui/Screen';
 import { Surface } from '../components/ui/Surface';
 import { buildTimeSeries } from '../services/analytics';
-import { resolveCostUsd } from '../services/pricing';
+import {
+  modelRatesForProvider,
+  resolveCostUsd,
+  validateManualUsageInput,
+} from '../services/pricing';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
 import { getTheme, spacing, typography } from '../theme/tokens';
 import { formatRelativeTime, formatTokens, formatUsd } from '../utils/format';
@@ -41,6 +45,7 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
   const [cost, setCost] = useState('');
   const [inputTok, setInputTok] = useState('');
   const [outputTok, setOutputTok] = useState('');
+  const [modelId, setModelId] = useState('');
   const [note, setNote] = useState('');
   const [newKey, setNewKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -63,6 +68,7 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
       inputTokens: provider.lastUsage.inputTokens,
       outputTokens: provider.lastUsage.outputTokens,
       totalTokens: provider.lastUsage.totalTokens,
+      modelId: provider.lastUsage.modelId,
     });
   }, [provider]);
 
@@ -81,6 +87,9 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
 
   const def = PROVIDER_CATALOG[provider.kind];
   const usage = provider.lastUsage;
+  const modelRates = modelRatesForProvider(provider.kind);
+  const tokensNeedEstimate =
+    cost.trim() === '' && (inputTok.trim() !== '' || outputTok.trim() !== '');
 
   const inputStyle = {
     backgroundColor: t.bgElevated,
@@ -90,17 +99,29 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
   };
 
   const onManual = async () => {
+    const parsed = validateManualUsageInput({
+      costUsd: cost,
+      inputTokens: inputTok,
+      outputTokens: outputTok,
+      modelId,
+    });
+    if (!parsed.value) {
+      Alert.alert('Check snapshot', parsed.error);
+      return;
+    }
+
     setBusy(true);
     try {
-      await logManualUsage(provider.id, {
-        costUsd: cost.trim() === '' ? null : Number(cost),
-        inputTokens: inputTok.trim() === '' ? null : Number(inputTok),
-        outputTokens: outputTok.trim() === '' ? null : Number(outputTok),
+      const manualInput = {
+        ...parsed.value,
         note: note.trim() || undefined,
-      });
+        measurementKind: 'point' as const,
+      };
+      await logManualUsage(provider.id, manualInput);
       setCost('');
       setInputTok('');
       setOutputTok('');
+      setModelId('');
       setNote('');
       Alert.alert('Saved', 'Manual usage snapshot stored only on this device.');
     } finally {
@@ -112,14 +133,19 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
     if (!newKey.trim()) return;
     await updateCredential(provider.id, newKey.trim());
     setNewKey('');
-    await refreshProvider(provider.id);
-    Alert.alert('Key updated', 'Encrypted on device. Previous key overwritten.');
+    const result = await refreshProvider(provider.id);
+    Alert.alert(
+      result.ok ? 'Key updated' : 'Key saved with a warning',
+      result.ok
+        ? 'Saved in OS secure storage and validated.'
+        : result.message ?? 'The provider could not validate this key.',
+    );
   };
 
   const onDelete = () => {
     Alert.alert(
       'Remove provider?',
-      'Deletes the encrypted key and local usage for this provider from this device only.',
+      'Deletes the stored key and local usage for this provider from this device only.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -202,6 +228,9 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
             {usage.windowLabel}
           </Text>
         ) : null}
+        <Text style={[styles.meta, { color: t.textMuted }]}>
+          Measurement: {usage?.measurementKind ?? 'unknown'}
+        </Text>
         {provider.lastError ? (
           <Text style={[styles.error, { color: t.danger }]}>
             {provider.lastError}
@@ -232,8 +261,8 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
       <Surface variant="card" padded>
         <Text style={[styles.cardTitle, { color: t.text }]}>Manual snapshot</Text>
         <Text style={[styles.help, { color: t.textSecondary }]}>
-          Leave cost blank and enter tokens to store a snapshot — the dashboard will
-          estimate cost from list rates.
+          Enter a cost, tokens, or both. Token-only snapshots need a pricing model.
+          Manual entries are point readings and are never treated as cumulative usage.
         </Text>
         <TextInput
           style={[styles.input, inputStyle]}
@@ -259,6 +288,42 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
           value={outputTok}
           onChangeText={setOutputTok}
         />
+        {tokensNeedEstimate ? (
+          <View style={styles.modelSection}>
+            <Text style={[styles.modelLabel, { color: t.textSecondary }]}>
+              Pricing model
+            </Text>
+            <View style={styles.modelOptions}>
+              {modelRates.map((model) => {
+                const selected = model.id === modelId;
+                return (
+                  <Pressable
+                    key={model.id}
+                    onPress={() => setModelId(model.id)}
+                    style={[
+                      styles.modelOption,
+                      {
+                        borderColor: selected ? t.accent : t.border,
+                        backgroundColor: selected ? t.accentSoft : t.bgElevated,
+                        borderRadius: t.radius.full,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: selected ? t.accent : t.textSecondary,
+                        fontSize: 12,
+                        fontWeight: '600',
+                      }}
+                    >
+                      {model.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
         <TextInput
           style={[styles.input, inputStyle]}
           placeholder="Note (optional)"
@@ -286,7 +351,7 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
           onChangeText={setNewKey}
         />
         <PrimaryButton
-          label="Replace encrypted key"
+          label="Replace and validate key"
           variant="outline"
           onPress={onUpdateKey}
           style={{ marginTop: spacing.sm }}
@@ -343,5 +408,13 @@ const styles = StyleSheet.create({
     paddingVertical: Platform.OS === 'ios' ? 14 : 10,
     fontSize: 15,
     marginTop: 8,
+  },
+  modelSection: { gap: spacing.sm, marginTop: spacing.md },
+  modelLabel: { fontSize: 13, fontWeight: '600' },
+  modelOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  modelOption: {
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
 });

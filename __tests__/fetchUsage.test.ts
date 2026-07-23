@@ -28,6 +28,7 @@ describe('createManualSnapshot', () => {
 
 describe('fetchProviderUsage', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -94,28 +95,110 @@ describe('fetchProviderUsage', () => {
     const res = await fetchProviderUsage('openai', 'bad');
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/401/);
+    expect(res.message).not.toContain('invalid');
   });
 
-  it('Anthropic aggregates usage report tokens', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string) => {
-        if (String(url).includes('usage_report')) {
-          return jsonResponse({
-            data: [
-              { usage: { input_tokens: 100, output_tokens: 50 } },
-              { usage: { input_tokens: 20, output_tokens: 30 } },
-            ],
-          });
-        }
-        return jsonResponse({}, 404);
-      }),
+  it('falls back when OpenAI returns malformed cost data', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes('/organization/costs')
+        ? jsonResponse({})
+        : jsonResponse({ data: [] }),
     );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchProviderUsage('openai', 'sk-test');
+    expect(res.ok).toBe(true);
+    expect(res.snapshot?.costUsd).toBeNull();
+    expect(res.snapshot?.measurementKind).toBe('point');
+  });
+
+  it('rejects malformed OpenRouter usage data', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ data: {} })));
+    await expect(fetchProviderUsage('openrouter', 'key')).resolves.toEqual({
+      ok: false,
+      message: 'OpenRouter returned an invalid response.',
+    });
+  });
+
+  it('Anthropic aggregates documented usage fields across pages', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      const requestUrl = new URL(String(url));
+      expect(requestUrl.searchParams.get('limit')).toBe('31');
+      expect(requestUrl.searchParams.get('starting_at')).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+      );
+      expect(requestUrl.searchParams.get('ending_at')).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+      );
+
+      if (!requestUrl.searchParams.has('page')) {
+        return jsonResponse({
+          data: [
+            {
+              starting_at: '2025-08-01T00:00:00Z',
+              ending_at: '2025-08-02T00:00:00Z',
+              results: [
+                {
+                  uncached_input_tokens: 1500,
+                  cache_read_input_tokens: 200,
+                  cache_creation: {
+                    ephemeral_1h_input_tokens: 1000,
+                    ephemeral_5m_input_tokens: 500,
+                  },
+                  output_tokens: 500,
+                },
+              ],
+            },
+          ],
+          has_more: true,
+          next_page: 'next-token',
+        });
+      }
+
+      expect(requestUrl.searchParams.get('page')).toBe('next-token');
+      return jsonResponse({
+        data: [
+          {
+            results: [
+              {
+                uncached_input_tokens: 20,
+                cache_read_input_tokens: 30,
+                cache_creation: {
+                  ephemeral_1h_input_tokens: 40,
+                  ephemeral_5m_input_tokens: 10,
+                },
+                output_tokens: 100,
+              },
+            ],
+          },
+        ],
+        has_more: false,
+        next_page: null,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     const res = await fetchProviderUsage('anthropic', 'sk-ant');
     expect(res.ok).toBe(true);
-    expect(res.snapshot?.inputTokens).toBe(120);
-    expect(res.snapshot?.outputTokens).toBe(80);
-    expect(res.snapshot?.totalTokens).toBe(200);
+    expect(res.snapshot?.inputTokens).toBe(3300);
+    expect(res.snapshot?.outputTokens).toBe(600);
+    expect(res.snapshot?.totalTokens).toBe(3900);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('Anthropic stops when pagination repeats a cursor', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('usage_report')) {
+        return jsonResponse({ data: [], has_more: true, next_page: 'same' });
+      }
+      return jsonResponse({ data: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchProviderUsage('anthropic', 'sk-ant');
+    expect(res.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('Anthropic validates via models without calling messages', async () => {
@@ -160,17 +243,24 @@ describe('fetchProviderUsage', () => {
   });
 
   it('xAI fails on bad key', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({}, 401)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'secret response body' }, 401)),
+    );
     const res = await fetchProviderUsage('xai', 'bad');
     expect(res.ok).toBe(false);
+    expect(res.message).toBe('xAI request failed (401).');
   });
 
   it('Google validates models list', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
-        expect(String(url)).toContain('generativelanguage.googleapis.com');
-        expect(String(url)).toContain('key=AIza');
+      vi.fn(async (url: string, init?: RequestInit) => {
+        expect(String(url)).toBe(
+          'https://generativelanguage.googleapis.com/v1beta/models',
+        );
+        expect(init?.headers).toEqual({ 'x-goog-api-key': 'AIza-test' });
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
         return jsonResponse({ models: [] });
       }),
     );
@@ -218,5 +308,60 @@ describe('fetchProviderUsage', () => {
       'https://proxy.example.com',
     );
     expect(res.ok).toBe(true);
+  });
+
+  it.each([
+    ['not a URL', 'Custom base URL is invalid.'],
+    [
+      'https://user:password@proxy.example.com',
+      'Custom base URL must not include credentials.',
+    ],
+    ['http://proxy.example.com', 'Custom base URL must use HTTPS.'],
+  ])('rejects unsafe custom base URL %s', async (baseUrl, message) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchProviderUsage('custom', 'key', baseUrl);
+    expect(res).toEqual({ ok: false, message });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows and normalizes localhost development endpoints', async () => {
+    vi.stubGlobal('__DEV__', true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        expect(String(url)).toBe('http://127.0.0.1:8080/api/v1/models');
+        return jsonResponse({ data: [] });
+      }),
+    );
+
+    const res = await fetchProviderUsage(
+      'custom',
+      '',
+      'http://127.0.0.1:8080/api/?token=secret#fragment',
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it('returns a fixed network message and supplies an abort signal', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async (_url: string, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          expect(init?.signal).toBeInstanceOf(AbortSignal);
+          init?.signal?.addEventListener('abort', () =>
+            reject(new Error('response body must not escape')),
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = fetchProviderUsage('xai', 'key');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      message: 'Network request timed out or failed.',
+    });
   });
 });

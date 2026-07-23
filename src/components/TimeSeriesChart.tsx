@@ -24,7 +24,7 @@ const METRICS: { id: ChartMetric; label: string }[] = [
   { id: 'tokenLevel', label: 'Tokens' },
 ];
 
-function valueOf(p: DayPoint, metric: ChartMetric): number {
+function valueOf(p: DayPoint, metric: ChartMetric): number | null {
   switch (metric) {
     case 'costDelta':
       return p.costDelta;
@@ -37,7 +37,7 @@ function valueOf(p: DayPoint, metric: ChartMetric): number {
   }
 }
 
-function formatValue(metric: ChartMetric, v: number): string {
+function formatValue(metric: ChartMetric, v: number | null): string {
   if (metric.startsWith('token')) return formatTokens(v);
   return formatUsd(v);
 }
@@ -58,11 +58,11 @@ export function TimeSeriesChart({
   const [selected, setSelected] = useState<number | null>(null);
 
   const max = useMemo(() => {
-    const m = Math.max(...points.map((p) => valueOf(p, active)), 0);
+    const m = Math.max(...points.map((p) => valueOf(p, active) ?? 0), 0);
     return m > 0 ? m : 1;
   }, [points, active]);
 
-  const hasData = points.some((p) => valueOf(p, active) > 0);
+  const hasData = points.some((p) => (valueOf(p, active) ?? 0) > 0);
   const chartHeight = 140;
   const selectedPoint =
     selected != null && selected >= 0 && selected < points.length
@@ -70,7 +70,7 @@ export function TimeSeriesChart({
       : null;
   const labelEvery = points.length > 14 ? 4 : points.length > 8 ? 2 : 1;
   const peak = hasData
-    ? Math.max(...points.map((p) => valueOf(p, active)))
+    ? Math.max(...points.map((p) => valueOf(p, active) ?? 0))
     : 0;
 
   return (
@@ -166,7 +166,8 @@ export function TimeSeriesChart({
 
           <View style={[styles.barsRow, { height: chartHeight }]}>
             {points.map((p, i) => {
-              const v = valueOf(p, active);
+              const reading = valueOf(p, active);
+              const v = reading ?? 0;
               const h = Math.max(v > 0 ? 4 : 0, (v / max) * chartHeight);
               const isSel = selected === i;
               return (
@@ -174,7 +175,9 @@ export function TimeSeriesChart({
                   key={p.date}
                   style={styles.barHit}
                   onPress={() => setSelected(isSel ? null : i)}
-                  accessibilityLabel={`${p.label}: ${formatValue(active, v)}`}
+                  accessibilityLabel={`${p.label}: ${
+                    reading == null ? 'incompatible readings' : formatValue(active, reading)
+                  }`}
                 >
                   <View style={styles.barCol}>
                     <View

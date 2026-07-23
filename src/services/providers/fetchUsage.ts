@@ -7,8 +7,30 @@ export interface FetchResult {
   message?: string;
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
+const NETWORK_ERROR_MESSAGE = 'Network request timed out or failed.';
+
+async function providerFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function nonnegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
 }
 
 function snap(
@@ -22,7 +44,7 @@ async function safeJson(res: Response): Promise<unknown> {
   try {
     return JSON.parse(text);
   } catch {
-    return { raw: text };
+    return null;
   }
 }
 
@@ -32,7 +54,7 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
   const end = Math.floor(Date.now() / 1000);
   const start = end - 30 * 24 * 60 * 60;
   try {
-    const costsRes = await fetch(
+    const costsRes = await providerFetch(
       `https://api.openai.com/v1/organization/costs?start_time=${start}&end_time=${end}&bucket_width=1d&limit=31`,
       {
         headers: {
@@ -44,11 +66,17 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
     if (costsRes.ok) {
       const data = (await safeJson(costsRes)) as {
         data?: Array<{ results?: Array<{ amount?: { value?: number } }> }>;
-      };
+      } | null;
+      if (
+        !Array.isArray(data?.data) ||
+        !data.data.every((bucket) => Array.isArray(bucket.results))
+      ) {
+        throw new Error('Invalid OpenAI costs response.');
+      }
       let total = 0;
-      for (const bucket of data.data ?? []) {
+      for (const bucket of data.data) {
         for (const r of bucket.results ?? []) {
-          total += r.amount?.value ?? 0;
+          total += nonnegativeNumber(r.amount?.value) ?? 0;
         }
       }
       return {
@@ -59,6 +87,9 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'period',
+          periodStart: new Date(start * 1000).toISOString(),
+          periodEnd: new Date(end * 1000).toISOString(),
           source: 'api',
           windowLabel: 'last 30 days (org costs)',
         }),
@@ -68,7 +99,7 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
     // continue to models probe
   }
 
-  const modelsRes = await fetch('https://api.openai.com/v1/models', {
+  const modelsRes = await providerFetch('https://api.openai.com/v1/models', {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (modelsRes.ok) {
@@ -82,16 +113,16 @@ async function fetchOpenAI(apiKey: string): Promise<FetchResult> {
         inputTokens: null,
         outputTokens: null,
         totalTokens: null,
+        measurementKind: 'point',
         source: 'api',
         windowLabel: 'key validated · costs unavailable',
         note: 'Use manual entry or an sk-admin key for org costs.',
       }),
     };
   }
-  const err = await safeJson(modelsRes);
   return {
     ok: false,
-    message: `OpenAI rejected the key (${modelsRes.status}): ${JSON.stringify(err).slice(0, 180)}`,
+    message: `OpenAI request failed (${modelsRes.status}).`,
   };
 }
 
@@ -105,41 +136,87 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
 
   // Admin usage report (requires admin key + org access)
   try {
-    const starting = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
-    const ending = new Date().toISOString().slice(0, 10);
-    const usageRes = await fetch(
-      `https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at=${starting}&ending_at=${ending}&bucket_width=1d`,
-      { headers },
-    );
-    if (usageRes.ok) {
+    const periodStart = new Date(
+      Date.now() - 30 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const periodEnd = new Date().toISOString();
+    const params = new URLSearchParams({
+      starting_at: periodStart,
+      ending_at: periodEnd,
+      bucket_width: '1d',
+      limit: '31',
+    });
+    const endpoint =
+      'https://api.anthropic.com/v1/organizations/usage_report/messages';
+    const seenPages = new Set<string>();
+    let input = 0;
+    let output = 0;
+    let pageCount = 0;
+
+    while (pageCount < 100) {
+      const usageRes = await providerFetch(`${endpoint}?${params}`, { headers });
+      if (!usageRes.ok) break;
+
       const data = (await safeJson(usageRes)) as {
         data?: Array<{
-          usage?: {
-            input_tokens?: number;
+          results?: Array<{
+            uncached_input_tokens?: number;
+            cache_read_input_tokens?: number;
+            cache_creation?: {
+              ephemeral_5m_input_tokens?: number;
+              ephemeral_1h_input_tokens?: number;
+            };
             output_tokens?: number;
-          };
+          }>;
         }>;
-      };
-      let input = 0;
-      let output = 0;
-      for (const b of data.data ?? []) {
-        input += b.usage?.input_tokens ?? 0;
-        output += b.usage?.output_tokens ?? 0;
+        has_more?: boolean;
+        next_page?: string | null;
+      } | null;
+
+      if (
+        !data ||
+        !Array.isArray(data.data) ||
+        typeof data.has_more !== 'boolean' ||
+        !data.data.every((bucket) => Array.isArray(bucket.results))
+      ) {
+        break;
       }
-      return {
-        ok: true,
-        validated: true,
-        snapshot: snap({
-          costUsd: null,
-          inputTokens: input,
-          outputTokens: output,
-          totalTokens: input + output,
-          source: 'api',
-          windowLabel: 'last 30 days (usage report)',
-        }),
-      };
+
+      for (const bucket of data.data) {
+        for (const result of bucket.results ?? []) {
+          input += nonnegativeNumber(result.uncached_input_tokens) ?? 0;
+          input += nonnegativeNumber(result.cache_read_input_tokens) ?? 0;
+          input +=
+            nonnegativeNumber(result.cache_creation?.ephemeral_5m_input_tokens) ?? 0;
+          input +=
+            nonnegativeNumber(result.cache_creation?.ephemeral_1h_input_tokens) ?? 0;
+          output += nonnegativeNumber(result.output_tokens) ?? 0;
+        }
+      }
+
+      pageCount += 1;
+      if (!data?.has_more) {
+        return {
+          ok: true,
+          validated: true,
+          snapshot: snap({
+            costUsd: null,
+            inputTokens: input,
+            outputTokens: output,
+            totalTokens: input + output,
+            measurementKind: 'period',
+            periodStart,
+            periodEnd,
+            source: 'api',
+            windowLabel: 'last 30 days (usage report)',
+          }),
+        };
+      }
+
+      const nextPage = data.next_page;
+      if (!nextPage || seenPages.has(nextPage)) break;
+      seenPages.add(nextPage);
+      params.set('page', nextPage);
     }
   } catch {
     // fall through
@@ -147,9 +224,10 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
 
   // Validate with models list only — never call /messages (would spend tokens).
   try {
-    const modelsRes = await fetch('https://api.anthropic.com/v1/models?limit=1', {
-      headers,
-    });
+    const modelsRes = await providerFetch(
+      'https://api.anthropic.com/v1/models?limit=1',
+      { headers },
+    );
     if (modelsRes.status === 401 || modelsRes.status === 403) {
       return { ok: false, message: 'Anthropic rejected the API key.' };
     }
@@ -164,6 +242,7 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'point',
           source: 'api',
           windowLabel: 'key validated · usage report unavailable',
         }),
@@ -179,28 +258,28 @@ async function fetchAnthropic(apiKey: string): Promise<FetchResult> {
         inputTokens: null,
         outputTokens: null,
         totalTokens: null,
+        measurementKind: 'point',
         source: 'unknown',
         windowLabel: 'key saved',
       }),
     };
-  } catch (e) {
+  } catch {
     return {
       ok: false,
-      message: e instanceof Error ? e.message : 'Network error contacting Anthropic',
+      message: NETWORK_ERROR_MESSAGE,
     };
   }
 }
 
 /** xAI / Grok */
 async function fetchXai(apiKey: string): Promise<FetchResult> {
-  const res = await fetch('https://api.x.ai/v1/models', {
+  const res = await providerFetch('https://api.x.ai/v1/models', {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) {
-    const err = await safeJson(res);
     return {
       ok: false,
-      message: `xAI rejected the key (${res.status}): ${JSON.stringify(err).slice(0, 180)}`,
+      message: `xAI request failed (${res.status}).`,
     };
   }
   return {
@@ -212,6 +291,7 @@ async function fetchXai(apiKey: string): Promise<FetchResult> {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      measurementKind: 'point',
       source: 'api',
       windowLabel: 'key validated',
     }),
@@ -220,20 +300,22 @@ async function fetchXai(apiKey: string): Promise<FetchResult> {
 
 /** OpenRouter — excellent first-class usage on the key endpoint. */
 async function fetchOpenRouter(apiKey: string): Promise<FetchResult> {
-  const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
+  const res = await providerFetch('https://openrouter.ai/api/v1/auth/key', {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) {
-    const err = await safeJson(res);
     return {
       ok: false,
-      message: `OpenRouter error (${res.status}): ${JSON.stringify(err).slice(0, 180)}`,
+      message: `OpenRouter request failed (${res.status}).`,
     };
   }
   const body = (await safeJson(res)) as {
     data?: { usage?: number; limit?: number | null; label?: string };
-  };
-  const usage = body.data?.usage ?? 0;
+  } | null;
+  const usage = nonnegativeNumber(body?.data?.usage);
+  if (usage == null) {
+    return { ok: false, message: 'OpenRouter returned an invalid response.' };
+  }
   return {
     ok: true,
     validated: true,
@@ -242,23 +324,24 @@ async function fetchOpenRouter(apiKey: string): Promise<FetchResult> {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      measurementKind: 'cumulative',
       source: 'api',
       windowLabel: 'lifetime (OpenRouter key usage)',
-      note: body.data?.label,
+      note: body?.data?.label,
     }),
   };
 }
 
 /** Google AI Studio */
 async function fetchGoogle(apiKey: string): Promise<FetchResult> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+  const res = await providerFetch(
+    'https://generativelanguage.googleapis.com/v1beta/models',
+    { headers: { 'x-goog-api-key': apiKey } },
   );
   if (!res.ok) {
-    const err = await safeJson(res);
     return {
       ok: false,
-      message: `Google AI error (${res.status}): ${JSON.stringify(err).slice(0, 180)}`,
+      message: `Google AI request failed (${res.status}).`,
     };
   }
   return {
@@ -270,6 +353,7 @@ async function fetchGoogle(apiKey: string): Promise<FetchResult> {
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      measurementKind: 'point',
       source: 'api',
       windowLabel: 'key validated',
     }),
@@ -288,21 +372,52 @@ async function fetchCustom(apiKey: string, baseUrl?: string): Promise<FetchResul
         inputTokens: null,
         outputTokens: null,
         totalTokens: null,
+        measurementKind: 'point',
         source: 'unknown',
         windowLabel: 'manual',
       }),
     };
   }
-  const root = baseUrl.replace(/\/$/, '');
-  const url = root.endsWith('/v1') ? `${root}/models` : `${root}/v1/models`;
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return { ok: false, message: 'Custom base URL is invalid.' };
+  }
+  if (parsed.username || parsed.password) {
+    return {
+      ok: false,
+      message: 'Custom base URL must not include credentials.',
+    };
+  }
+  const isLocalDevelopment =
+    parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  const allowInsecureLocalhost =
+    typeof __DEV__ !== 'undefined' && __DEV__ && isLocalDevelopment;
+  if (
+    parsed.protocol !== 'https:' &&
+    !(parsed.protocol === 'http:' && allowInsecureLocalhost)
+  ) {
+    return {
+      ok: false,
+      message: 'Custom base URL must use HTTPS.',
+    };
+  }
+  const rootPath = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = rootPath.endsWith('/v1')
+    ? `${rootPath}/models`
+    : `${rootPath}/v1/models`;
+  parsed.search = '';
+  parsed.hash = '';
+  const url = parsed.toString();
   const headers: Record<string, string> = {};
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  const res = await fetch(url, { headers });
+  const res = await providerFetch(url, { headers });
   if (!res.ok) {
     return {
       ok: false,
-      message: `Custom endpoint error (${res.status}) at ${url}`,
+      message: `Custom endpoint request failed (${res.status}).`,
     };
   }
   return {
@@ -313,6 +428,7 @@ async function fetchCustom(apiKey: string, baseUrl?: string): Promise<FetchResul
       inputTokens: null,
       outputTokens: null,
       totalTokens: null,
+      measurementKind: 'point',
       source: 'api',
       windowLabel: 'endpoint validated',
     }),
@@ -328,21 +444,25 @@ export async function fetchProviderUsage(
   apiKey: string,
   baseUrl?: string,
 ): Promise<FetchResult> {
-  switch (kind) {
-    case 'openai':
-      return fetchOpenAI(apiKey);
-    case 'anthropic':
-      return fetchAnthropic(apiKey);
-    case 'xai':
-      return fetchXai(apiKey);
-    case 'openrouter':
-      return fetchOpenRouter(apiKey);
-    case 'google':
-      return fetchGoogle(apiKey);
-    case 'custom':
-      return fetchCustom(apiKey, baseUrl);
-    default:
-      return { ok: false, message: 'Unknown provider' };
+  try {
+    switch (kind) {
+      case 'openai':
+        return await fetchOpenAI(apiKey);
+      case 'anthropic':
+        return await fetchAnthropic(apiKey);
+      case 'xai':
+        return await fetchXai(apiKey);
+      case 'openrouter':
+        return await fetchOpenRouter(apiKey);
+      case 'google':
+        return await fetchGoogle(apiKey);
+      case 'custom':
+        return await fetchCustom(apiKey, baseUrl);
+      default:
+        return { ok: false, message: 'Unknown provider' };
+    }
+  } catch {
+    return { ok: false, message: NETWORK_ERROR_MESSAGE };
   }
 }
 
@@ -350,6 +470,8 @@ export function createManualSnapshot(input: {
   costUsd?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  modelId?: string;
+  measurementKind?: UsageSnapshot['measurementKind'];
   note?: string;
 }): UsageSnapshot {
   const inputTokens = input.inputTokens ?? null;
@@ -363,6 +485,8 @@ export function createManualSnapshot(input: {
     inputTokens,
     outputTokens,
     totalTokens: total,
+    modelId: input.modelId,
+    measurementKind: input.measurementKind ?? 'point',
     note: input.note,
     source: 'manual',
     fetchedAt: nowIso(),

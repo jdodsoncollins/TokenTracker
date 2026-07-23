@@ -4,9 +4,9 @@ import { AppProvider } from './src/app/AppContext';
 import { RootShell } from './src/app/RootShell';
 
 /**
- * TokenTracker — local-first LLM usage tracker.
- * No accounts, no backend, no analytics. Credentials never leave the device
- * except as direct HTTPS calls to the providers you choose.
+ * TokenTracker: local-first LLM usage tracker.
+ * No accounts, backend, or telemetry. Save and validate and Refresh send
+ * credentials directly to the selected provider.
  */
 export default function App() {
   return (

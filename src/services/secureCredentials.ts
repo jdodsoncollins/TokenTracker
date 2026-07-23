@@ -7,50 +7,74 @@ import { maskCredential as maskCredentialPure } from '../utils/format';
  * Offline encrypted credential vault.
  *
  * - Native (iOS/Android): OS Keychain / Keystore via expo-secure-store.
- * - Web (dev only): AES-GCM with a device-local key in localStorage.
- *   Production mobile builds do not rely on web storage.
+ * - Web: session-only memory. A reload discards every credential.
  *
  * Zero telemetry: nothing here phones home. Keys are only read when you
  * refresh usage or validate a provider — and then only sent to that provider.
  */
 
 const KEY_PREFIX = 'tt_cred_';
-const WEB_MASTER_KEY = 'tt_web_master_v1';
+const CREDENTIAL_INDEX_KEY = 'tt_credential_ids_v1';
+const LEGACY_WEB_MASTER_KEY = 'tt_web_master_v1';
+const secureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+const webCredentials = new Map<string, string>();
+let credentialMutation = Promise.resolve();
 
 function storeKey(providerId: string): string {
   // SecureStore keys must be alphanumeric + ._-
   return `${KEY_PREFIX}${providerId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 }
 
-async function getWebMasterKey(): Promise<CryptoKey> {
-  const existing = localStorage.getItem(WEB_MASTER_KEY);
-  if (existing) {
-    const raw = Uint8Array.from(atob(existing), (c) => c.charCodeAt(0));
-    return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+function runCredentialMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = credentialMutation.then(operation);
+  credentialMutation = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function loadCredentialIndex(): Promise<string[]> {
+  const raw = await SecureStore.getItemAsync(CREDENTIAL_INDEX_KEY);
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string')
+      : [];
+  } catch {
+    return [];
   }
-  const raw = crypto.getRandomValues(new Uint8Array(32));
-  localStorage.setItem(WEB_MASTER_KEY, btoa(String.fromCharCode(...raw)));
-  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
-async function webEncrypt(plaintext: string): Promise<string> {
-  const key = await getWebMasterKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(plaintext);
-  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-  const combined = new Uint8Array(iv.length + cipher.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(cipher), iv.length);
-  return btoa(String.fromCharCode(...combined));
+async function saveCredentialIndex(ids: string[]): Promise<void> {
+  await SecureStore.setItemAsync(
+    CREDENTIAL_INDEX_KEY,
+    JSON.stringify(ids),
+    secureStoreOptions,
+  );
 }
 
-async function webDecrypt(blob: string): Promise<string> {
-  const key = await getWebMasterKey();
-  const combined = Uint8Array.from(atob(blob), (c) => c.charCodeAt(0));
-  const iv = combined.slice(0, 12);
-  const data = combined.slice(12);
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  return new TextDecoder().decode(plain);
+function clearLegacyWebStorage(providerIds: string[]): void {
+  if (typeof localStorage === 'undefined') return;
+  for (const id of providerIds) localStorage.removeItem(storeKey(id));
+  localStorage.removeItem(LEGACY_WEB_MASTER_KEY);
+}
+
+/** Register credentials written before the secure-store index existed. */
+export async function migrateCredentialStorage(providerIds: string[]): Promise<void> {
+  if (Platform.OS === 'web') {
+    clearLegacyWebStorage(providerIds);
+    return;
+  }
+
+  await runCredentialMutation(async () => {
+    const ids = await loadCredentialIndex();
+    const merged = [...new Set([...ids, ...providerIds])];
+    if (merged.length !== ids.length) await saveCredentialIndex(merged);
+  });
 }
 
 export async function saveCredential(providerId: string, apiKey: string): Promise<void> {
@@ -61,13 +85,16 @@ export async function saveCredential(providerId: string, apiKey: string): Promis
   const key = storeKey(providerId);
 
   if (Platform.OS === 'web') {
-    const encrypted = await webEncrypt(trimmed);
-    localStorage.setItem(key, encrypted);
+    webCredentials.set(key, trimmed);
     return;
   }
 
-  await SecureStore.setItemAsync(key, trimmed, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  await runCredentialMutation(async () => {
+    const ids = await loadCredentialIndex();
+    if (!ids.includes(providerId)) {
+      await saveCredentialIndex([...ids, providerId]);
+    }
+    await SecureStore.setItemAsync(key, trimmed, secureStoreOptions);
   });
 }
 
@@ -75,13 +102,7 @@ export async function getCredential(providerId: string): Promise<string | null> 
   const key = storeKey(providerId);
 
   if (Platform.OS === 'web') {
-    const blob = localStorage.getItem(key);
-    if (!blob) return null;
-    try {
-      return await webDecrypt(blob);
-    } catch {
-      return null;
-    }
+    return webCredentials.get(key) ?? null;
   }
 
   return SecureStore.getItemAsync(key);
@@ -91,11 +112,35 @@ export async function deleteCredential(providerId: string): Promise<void> {
   const key = storeKey(providerId);
 
   if (Platform.OS === 'web') {
-    localStorage.removeItem(key);
+    webCredentials.delete(key);
     return;
   }
 
-  await SecureStore.deleteItemAsync(key);
+  await runCredentialMutation(async () => {
+    await SecureStore.deleteItemAsync(key);
+    const ids = await loadCredentialIndex();
+    if (ids.includes(providerId)) {
+      await saveCredentialIndex(ids.filter((id) => id !== providerId));
+    }
+  });
+}
+
+export async function wipeAllCredentials(providerIds: string[] = []): Promise<void> {
+  if (Platform.OS === 'web') {
+    webCredentials.clear();
+    clearLegacyWebStorage(providerIds);
+    return;
+  }
+
+  await runCredentialMutation(async () => {
+    const ids = [...new Set([...(await loadCredentialIndex()), ...providerIds])];
+    for (const id of ids) {
+      // Keep the index until every deletion succeeds so callers can retry a failed wipe.
+      // eslint-disable-next-line no-await-in-loop
+      await SecureStore.deleteItemAsync(storeKey(id));
+    }
+    await SecureStore.deleteItemAsync(CREDENTIAL_INDEX_KEY);
+  });
 }
 
 /** Redact a key for UI display — never log the full value. */

@@ -1,34 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_MODEL_BY_KIND,
-  defaultModelForKind,
   estimateCostFromTokens,
   getModelRate,
   MODEL_RATES,
+  modelRatesForProvider,
   resolveCostUsd,
 } from '../src/services/pricing';
-import type { ProviderKind } from '../src/types';
 
 describe('pricing catalog integrity', () => {
-  it('has a default model for every provider kind', () => {
-    const kinds: ProviderKind[] = [
-      'openai',
-      'anthropic',
-      'xai',
-      'openrouter',
-      'google',
-      'custom',
-    ];
-    for (const kind of kinds) {
-      const model = defaultModelForKind(kind);
-      expect(model.id).toBe(DEFAULT_MODEL_BY_KIND[kind]);
-      expect(model.inputPerMTok).toBeGreaterThanOrEqual(0);
-      expect(model.outputPerMTok).toBeGreaterThanOrEqual(0);
-    }
+  it('filters selectable models by provider', () => {
+    expect(modelRatesForProvider('openai').map((model) => model.id)).toEqual([
+      'gpt-4o',
+      'gpt-4o-mini',
+      'o3-mini',
+    ]);
+    expect(
+      modelRatesForProvider('anthropic').every((model) =>
+        model.id.startsWith('claude'),
+      ),
+    ).toBe(true);
   });
 
-  it('falls back to generic for unknown model ids', () => {
-    expect(getModelRate('nope-model').id).toBe('generic');
+  it('rejects unknown model ids instead of substituting a rate', () => {
+    expect(getModelRate('nope-model')).toBeNull();
   });
 
   it('exposes positive rates for core models', () => {
@@ -39,18 +33,14 @@ describe('pricing catalog integrity', () => {
 
 describe('estimateCostFromTokens edge cases', () => {
   it('returns zero when no tokens', () => {
-    const est = estimateCostFromTokens({ kind: 'openai' });
+    const est = estimateCostFromTokens({ kind: 'openai', modelId: 'gpt-4o-mini' });
     expect(est.costUsd).toBe(0);
   });
 
-  it('uses provider default when model omitted', () => {
-    const est = estimateCostFromTokens({
-      kind: 'anthropic',
-      inputTokens: 1_000_000,
-      outputTokens: 0,
-    });
-    expect(est.model.id).toBe('claude-sonnet');
-    expect(est.costUsd).toBeCloseTo(3, 5);
+  it('rejects an unknown explicit model', () => {
+    expect(() =>
+      estimateCostFromTokens({ kind: 'anthropic', modelId: 'missing' }),
+    ).toThrow('Unknown pricing model');
   });
 });
 
@@ -70,6 +60,7 @@ describe('resolveCostUsd edge cases', () => {
       kind: 'openai',
       inputTokens: 0,
       outputTokens: 0,
+      modelId: 'gpt-4o-mini',
     });
     expect(r.isEstimate).toBe(true);
     expect(r.value).toBe(0);

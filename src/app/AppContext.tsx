@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import type { ProviderConfig, ProviderKind, UsageSnapshot } from '../types';
@@ -15,7 +16,9 @@ import {
 import {
   deleteCredential,
   getCredential,
+  migrateCredentialStorage,
   saveCredential,
+  wipeAllCredentials,
 } from '../services/secureCredentials';
 import {
   appendUsageHistory,
@@ -41,7 +44,7 @@ interface AppState {
     baseUrl?: string;
   }) => Promise<{ ok: boolean; message?: string }>;
   removeProvider: (id: string) => Promise<void>;
-  refreshProvider: (id: string) => Promise<void>;
+  refreshProvider: (id: string) => Promise<{ ok: boolean; message?: string }>;
   refreshAll: () => Promise<void>;
   logManualUsage: (
     id: string,
@@ -49,6 +52,8 @@ interface AppState {
       costUsd?: number | null;
       inputTokens?: number | null;
       outputTokens?: number | null;
+      modelId?: string;
+      measurementKind?: UsageSnapshot['measurementKind'];
       note?: string;
     },
   ) => Promise<void>;
@@ -70,6 +75,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [history, setHistory] = useState<UsageHistoryEntry[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const providersRef = useRef<ProviderConfig[]>([]);
+  const providerPersistenceRef = useRef(Promise.resolve());
 
   useEffect(() => {
     (async () => {
@@ -78,6 +85,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           loadProviders(),
           loadUsageHistory(),
         ]);
+        await migrateCredentialStorage(
+          loaded.filter((provider) => provider.hasCredential).map((provider) => provider.id),
+        );
+        providersRef.current = loaded;
         setProviders(loaded);
         setHistory(hist);
       } catch (e) {
@@ -88,10 +99,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  const persist = useCallback(async (next: ProviderConfig[]) => {
-    setProviders(next);
-    await saveProviders(next);
-  }, []);
+  const updateProviders = useCallback(
+    async (update: (current: ProviderConfig[]) => ProviderConfig[]) => {
+      const next = update(providersRef.current);
+      providersRef.current = next;
+      setProviders(next);
+      const persistence = providerPersistenceRef.current.then(() =>
+        saveProviders(next),
+      );
+      providerPersistenceRef.current = persistence.catch(() => undefined);
+      await persistence;
+    },
+    [],
+  );
 
   const recordHistory = useCallback(async (entry: UsageHistoryEntry) => {
     await appendUsageHistory(entry);
@@ -124,8 +144,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await saveCredential(id, input.apiKey);
       }
 
-      const next = [config, ...providers];
-      await persist(next);
+      await updateProviders((current) => [config, ...current]);
 
       if (input.apiKey.trim()) {
         try {
@@ -134,24 +153,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             input.apiKey.trim(),
             config.baseUrl,
           );
-          const updated: ProviderConfig = {
-            ...config,
-            updatedAt: new Date().toISOString(),
-            lastUsage: result.snapshot ?? null,
-            lastError: result.ok ? null : result.message ?? 'Refresh failed',
-          };
           if (result.snapshot) {
             await recordHistory({ providerId: id, snapshot: result.snapshot });
           }
-          await persist(next.map((p) => (p.id === id ? updated : p)));
+          await updateProviders((current) =>
+            current.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    updatedAt: new Date().toISOString(),
+                    lastUsage: result.snapshot ?? p.lastUsage ?? null,
+                    lastError: result.ok
+                      ? null
+                      : result.message ?? 'Refresh failed',
+                  }
+                : p,
+            ),
+          );
           return {
             ok: result.ok,
             message: result.message,
           };
         } catch (e) {
-          const msg = e instanceof Error ? e.message : 'Network error';
-          await persist(
-            next.map((p) =>
+          const msg = 'Network error';
+          await updateProviders((current) =>
+            current.map((p) =>
               p.id === id
                 ? { ...p, lastError: msg, updatedAt: new Date().toISOString() }
                 : p,
@@ -163,7 +189,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       return { ok: true, message: 'Provider saved (no key — use manual usage).' };
     },
-    [persist, providers, recordHistory],
+    [recordHistory, updateProviders],
   );
 
   const removeProvider = useCallback(
@@ -171,22 +197,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await deleteCredential(id);
       await removeHistoryForProvider(id);
       setHistory((prev) => prev.filter((h) => h.providerId !== id));
-      await persist(providers.filter((p) => p.id !== id));
+      await updateProviders((current) => current.filter((p) => p.id !== id));
     },
-    [persist, providers],
+    [updateProviders],
   );
 
   const refreshProvider = useCallback(
     async (id: string) => {
-      const provider = providers.find((p) => p.id === id);
-      if (!provider) return;
+      const provider = providersRef.current.find((p) => p.id === id);
+      if (!provider) return { ok: false, message: 'Provider not found.' };
       setRefreshingId(id);
       setGlobalError(null);
       try {
         const key = await getCredential(id);
         if (!key) {
-          await persist(
-            providers.map((p) =>
+          await updateProviders((current) =>
+            current.map((p) =>
               p.id === id
                 ? {
                     ...p,
@@ -197,20 +223,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 : p,
             ),
           );
-          return;
+          return { ok: false, message: 'No credential stored.' };
         }
         const result = await fetchProviderUsage(provider.kind, key, provider.baseUrl);
-        const nextUsage: UsageSnapshot | null =
-          result.snapshot ?? provider.lastUsage ?? null;
         if (result.snapshot) {
           await recordHistory({ providerId: id, snapshot: result.snapshot });
         }
-        await persist(
-          providers.map((p) =>
+        await updateProviders((current) =>
+          current.map((p) =>
             p.id === id
               ? {
                   ...p,
-                  lastUsage: nextUsage,
+                  lastUsage: result.snapshot ?? p.lastUsage ?? null,
                   lastError: result.ok ? null : result.message ?? 'Refresh failed',
                   updatedAt: new Date().toISOString(),
                   hasCredential: true,
@@ -218,28 +242,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               : p,
           ),
         );
+        return { ok: result.ok, message: result.message };
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Refresh failed';
-        await persist(
-          providers.map((p) =>
+        const msg = 'Refresh failed';
+        await updateProviders((current) =>
+          current.map((p) =>
             p.id === id
               ? { ...p, lastError: msg, updatedAt: new Date().toISOString() }
               : p,
           ),
         );
+        return { ok: false, message: msg };
       } finally {
         setRefreshingId(null);
       }
     },
-    [persist, providers, recordHistory],
+    [recordHistory, updateProviders],
   );
 
   const refreshAll = useCallback(async () => {
-    for (const p of providers) {
+    const ids = providersRef.current.map((provider) => provider.id);
+    for (const id of ids) {
       // eslint-disable-next-line no-await-in-loop
-      await refreshProvider(p.id);
+      await refreshProvider(id);
     }
-  }, [providers, refreshProvider]);
+  }, [refreshProvider]);
 
   const logManualUsage = useCallback(
     async (
@@ -248,13 +275,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         costUsd?: number | null;
         inputTokens?: number | null;
         outputTokens?: number | null;
+        modelId?: string;
+        measurementKind?: UsageSnapshot['measurementKind'];
         note?: string;
       },
     ) => {
       const snapshot = createManualSnapshot(input);
       await recordHistory({ providerId: id, snapshot });
-      await persist(
-        providers.map((p) =>
+      await updateProviders((current) =>
+        current.map((p) =>
           p.id === id
             ? {
                 ...p,
@@ -266,32 +295,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     },
-    [persist, providers, recordHistory],
+    [recordHistory, updateProviders],
   );
 
   const updateCredential = useCallback(
     async (id: string, apiKey: string) => {
       await saveCredential(id, apiKey);
-      await persist(
-        providers.map((p) =>
+      await updateProviders((current) =>
+        current.map((p) =>
           p.id === id
             ? { ...p, hasCredential: true, updatedAt: new Date().toISOString() }
             : p,
         ),
       );
     },
-    [persist, providers],
+    [updateProviders],
   );
 
   const wipeEverything = useCallback(async () => {
-    for (const p of providers) {
-      // eslint-disable-next-line no-await-in-loop
-      await deleteCredential(p.id);
-    }
+    await wipeAllCredentials(providersRef.current.map((provider) => provider.id));
+    await updateProviders(() => []);
     await clearAllLocalData();
-    setProviders([]);
     setHistory([]);
-  }, [providers]);
+  }, [updateProviders]);
 
   const totals = useMemo(() => {
     let costUsd = 0;

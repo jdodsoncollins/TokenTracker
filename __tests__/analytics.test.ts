@@ -19,13 +19,15 @@ const provider: ProviderConfig = {
     inputTokens: 1_000_000,
     outputTokens: 500_000,
     totalTokens: 1_500_000,
+    modelId: 'gpt-4o-mini',
+    measurementKind: 'point',
     source: 'manual',
     fetchedAt: '2026-07-10T12:00:00.000Z',
   },
 };
 
 describe('buildTimeSeries', () => {
-  it('buckets cost deltas by day', () => {
+  it('buckets compatible cumulative cost deltas by day', () => {
     const now = new Date('2026-07-10T18:00:00.000Z');
     const history: UsageHistoryEntry[] = [
       {
@@ -35,6 +37,7 @@ describe('buildTimeSeries', () => {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'cumulative',
           source: 'manual',
           fetchedAt: '2026-07-08T10:00:00.000Z',
         },
@@ -46,6 +49,7 @@ describe('buildTimeSeries', () => {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'cumulative',
           source: 'manual',
           fetchedAt: '2026-07-09T10:00:00.000Z',
         },
@@ -54,9 +58,59 @@ describe('buildTimeSeries', () => {
     const series = buildTimeSeries(history, [provider], 7, now);
     expect(series.points).toHaveLength(7);
     expect(series.hasData).toBe(true);
-    expect(series.totalCostDelta).toBeGreaterThan(0);
+    expect(series.totalCostDelta).toBe(3);
     // Level should carry to the end at 8
     expect(series.latestCostLevel).toBe(8);
+  });
+
+  it('does not carry or delta legacy unknown readings', () => {
+    const series = buildTimeSeries(
+      [
+        {
+          providerId: 'p1',
+          snapshot: {
+            costUsd: 5,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            source: 'manual',
+            fetchedAt: '2026-07-08T10:00:00.000Z',
+          },
+        },
+      ],
+      [provider],
+      7,
+      new Date('2026-07-10T18:00:00.000Z'),
+    );
+    expect(series.totalCostDelta).toBe(0);
+    expect(series.latestCostLevel).toBe(0);
+    expect(series.projectedMonthlyCost).toBeNull();
+  });
+
+  it('does not carry, delta, or project point and period readings', () => {
+    const snapshots = [
+      { costUsd: 4, measurementKind: 'period' as const, fetchedAt: '2026-07-08T10:00:00.000Z' },
+      { costUsd: 7, measurementKind: 'point' as const, fetchedAt: '2026-07-09T10:00:00.000Z' },
+    ];
+    const series = buildTimeSeries(
+      snapshots.map((snapshot) => ({
+        providerId: 'p1',
+        snapshot: {
+          ...snapshot,
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          source: 'manual' as const,
+        },
+      })),
+      [provider],
+      7,
+      new Date('2026-07-10T18:00:00.000Z'),
+    );
+
+    expect(series.totalCostDelta).toBe(0);
+    expect(series.latestCostLevel).toBe(0);
+    expect(series.projectedMonthlyCost).toBeNull();
   });
 
   it('returns empty-ish series without history', () => {
@@ -72,6 +126,7 @@ describe('cost estimates', () => {
     expect(rows[0].isEstimate).toBe(true);
     expect(rows[0].displayCost).toBeGreaterThan(0);
     const sum = sumDisplayCost(rows);
-    expect(sum.estimatedPortion).toBeGreaterThan(0);
+    expect(sum.total).toBeNull();
+    expect(sum.comparable).toBe(false);
   });
 });

@@ -6,38 +6,39 @@
 [![Privacy: zero telemetry](https://img.shields.io/badge/privacy-zero%20telemetry-brightgreen.svg)](./PRIVACY.md)
 
 <p align="center">
-  <strong>Simple · Attractive · Offline encrypted credentials · Radically transparent</strong>
+  <strong>Simple · Attractive · Local-first · Open source</strong>
 </p>
 
 ## Why
 
-Cloud dashboards are scattered. You want one place on your phone to see spend and tokens — without creating yet another account that harvests your usage.
+Cloud dashboards are scattered. TokenTracker gives you one place to see spend and tokens without another account.
 
 TokenTracker runs entirely on your device.
 
 ## Privacy promise
 
-> **Zero usage is ever recorded by TokenTracker.**
+> **TokenTracker receives no usage.**
 
-- No TokenTracker backend  
-- No analytics SDK  
+- No TokenTracker backend or telemetry
 - No accounts  
-- API keys stay in the OS secure enclave (`expo-secure-store`)  
-- Network traffic goes **only** to the providers you add  
+- Native credentials persist in OS secure storage through `expo-secure-store`. TokenTracker does not require biometric authentication or claim secure enclave storage.
+- Web credentials stay in memory and disappear on reload.
+- **Save and validate** and **Refresh** send keys directly to the selected provider. TokenTracker receives no prompts or provider response bodies.
+- Usage metadata stays in AsyncStorage. Android backup is disabled, but iOS or platform-managed device backups may include it.
 
 Full details: [PRIVACY.md](./PRIVACY.md)
 
 ## Features
 
-- **Multi-provider** — OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, custom bases  
-- **Encrypted credentials** — Keychain / Keystore; never committed to git  
-- **Auto usage** where the provider allows (e.g. OpenRouter key usage, OpenAI org costs with admin keys)  
-- **Manual snapshots** when auto-usage isn’t available  
-- **Usage charts** — 7 / 14 / 30 day timelines for spend deltas, cost levels, and tokens (all local history)  
-- **Cost estimates** — reported costs when available; otherwise token × public list rates (clearly marked as estimates) plus a simple ~30-day pace projection  
-- **Platform-native chrome** — Liquid Glass–inspired surfaces & floating tab bar on iOS; Material 3 Expressive tonal surfaces & nav indicators on Android ([DESIGN.md](./DESIGN.md))  
-- **Clean dark UI** — dashboard, provider management, privacy tab  
-- **Wipe everything** — one control to erase local keys + history  
+- **Multi-provider**: OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, and custom bases
+- **Native secure storage**: Keychain / Keystore through `expo-secure-store`
+- **Auto usage** where the provider allows, such as OpenRouter key usage and OpenAI organization costs with admin keys
+- **Manual snapshots** when auto usage is unavailable
+- **Usage charts**: 7 / 14 / 30 day timelines from local history
+- **Cost estimates**: provider-reported costs take precedence; token-based estimates require an explicit model and use its configured rates
+- **Platform-native chrome**: Liquid Glass-inspired surfaces and a floating tab bar on iOS; Material 3 Expressive tonal surfaces and navigation indicators on Android ([DESIGN.md](./DESIGN.md))
+- **Clean dark UI**: dashboard, provider management, privacy tab
+- **Wipe everything**: one control erases local keys and history
 
 ## Screenshots
 
@@ -57,9 +58,11 @@ Then open in Expo Go, an iOS simulator, Android emulator, or web.
 ## How credentials work
 
 1. You paste an API key in the app.  
-2. It is written with `SecureStore` (native) — not AsyncStorage, not env files.  
-3. On refresh, the key is read in memory and sent **only** to that provider over HTTPS.  
-4. Usage numbers are cached locally for the dashboard.
+2. Native apps persist it with `SecureStore`, without biometric authentication. Web builds keep it in memory until reload.
+3. **Save and validate** and **Refresh** send it directly to the selected provider. Custom endpoints require HTTPS except `http://localhost` and `http://127.0.0.1` during local development.
+4. TokenTracker stores provider labels and usage snapshots in AsyncStorage. It does not send prompts or provider response bodies to TokenTracker infrastructure because no such infrastructure exists.
+
+Cumulative readings carry forward and produce deltas only against a compatible cumulative reading. Period and point readings appear only on the day observed. TokenTracker keeps readings separate when their measurement windows differ. A token-based cost estimate requires you to select a model explicitly; TokenTracker labels the result as an estimate.
 
 **Never commit keys.** `.gitignore` blocks `.env`, secrets, and key material. Use the in-app form only.
 

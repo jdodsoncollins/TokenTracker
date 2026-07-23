@@ -1,4 +1,4 @@
-import type { ProviderConfig, ProviderKind } from '../types';
+import type { ProviderConfig, ProviderKind, UsageSnapshot } from '../types';
 import type { UsageHistoryEntry } from './storage';
 import { resolveCostUsd } from './pricing';
 import { PROVIDER_CATALOG } from './providers/catalog';
@@ -10,10 +10,10 @@ export interface DayPoint {
   date: string;
   /** Short axis label */
   label: string;
-  /** Latest known spend level that day (sum across providers) */
-  costLevel: number;
+  /** Latest compatible reading that day; only cumulative values carry forward. */
+  costLevel: number | null;
   /** Token level that day */
-  tokenLevel: number;
+  tokenLevel: number | null;
   /** Positive cost deltas observed that day (better for cumulative APIs) */
   costDelta: number;
   /** Positive token deltas that day */
@@ -47,6 +47,11 @@ export interface CostEstimateRow {
   isEstimate: boolean;
   estimateModel?: string;
   tokens: number | null;
+  measurementKind: UsageSnapshot['measurementKind'] | 'unknown';
+  periodStart?: string;
+  periodEnd?: string;
+  /** Equal non-null keys identify readings that can be added truthfully. */
+  comparabilityKey: string | null;
 }
 
 function toLocalDateKey(d: Date): string {
@@ -72,8 +77,21 @@ function tokenCount(s: {
   inputTokens?: number | null;
   outputTokens?: number | null;
 }): number | null {
-  if (s.totalTokens != null) return s.totalTokens;
+  const valid = (value: number | null | undefined) =>
+    value != null &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    Number.isInteger(value);
+  if (s.totalTokens != null) {
+    return valid(s.totalTokens) ? s.totalTokens : null;
+  }
   if (s.inputTokens != null || s.outputTokens != null) {
+    if (
+      (s.inputTokens != null && !valid(s.inputTokens)) ||
+      (s.outputTokens != null && !valid(s.outputTokens))
+    ) {
+      return null;
+    }
     return (s.inputTokens ?? 0) + (s.outputTokens ?? 0);
   }
   return null;
@@ -86,10 +104,52 @@ function kindFor(
   return providers.find((p) => p.id === providerId)?.kind ?? 'custom';
 }
 
+function resolvedCost(kind: ProviderKind, snapshot: UsageSnapshot) {
+  return resolveCostUsd({
+    kind,
+    costUsd: snapshot.costUsd,
+    inputTokens: snapshot.inputTokens,
+    outputTokens: snapshot.outputTokens,
+    totalTokens: snapshot.totalTokens,
+    modelId: snapshot.modelId,
+  });
+}
+
+function sameCumulativeSeries(a: UsageSnapshot, b: UsageSnapshot): boolean {
+  return (
+    a.measurementKind === 'cumulative' &&
+    b.measurementKind === 'cumulative' &&
+    (a.periodStart ?? null) === (b.periodStart ?? null)
+  );
+}
+
+function comparableCostValues(a: UsageSnapshot, b: UsageSnapshot): boolean {
+  const aReported = a.costUsd != null;
+  const bReported = b.costUsd != null;
+  return (
+    (aReported && bReported) ||
+    (!aReported && !bReported && Boolean(a.modelId) && a.modelId === b.modelId)
+  );
+}
+
+function comparabilityKey(snapshot: UsageSnapshot): string | null {
+  if (snapshot.measurementKind === 'cumulative') {
+    return `cumulative:${snapshot.periodStart ?? 'lifetime'}`;
+  }
+  if (
+    snapshot.measurementKind === 'period' &&
+    snapshot.periodStart &&
+    snapshot.periodEnd
+  ) {
+    return `period:${snapshot.periodStart}:${snapshot.periodEnd}`;
+  }
+  return null;
+}
+
 /**
  * Build daily series from local history.
- * Cost/token *levels* use the last snapshot of each day per provider (summed).
- * *Deltas* measure increases between consecutive snapshots for the same provider.
+ * Cumulative levels carry forward. Period, point, and legacy unknown readings only
+ * appear on the day observed. Deltas require two compatible cumulative snapshots.
  */
 export function buildTimeSeries(
   history: UsageHistoryEntry[],
@@ -127,23 +187,26 @@ export function buildTimeSeries(
   const estShare = new Map<string, number>();
   const deltaCost = new Map<string, number>();
   const deltaTokens = new Map<string, number>();
+  const costReadingKeys = new Map<string, Array<string | null>>();
+  const tokenReadingKeys = new Map<string, Array<string | null>>();
   for (const day of days) {
     levelCost.set(day, 0);
     levelTokens.set(day, 0);
     estShare.set(day, 0);
     deltaCost.set(day, 0);
     deltaTokens.set(day, 0);
+    costReadingKeys.set(day, []);
+    tokenReadingKeys.set(day, []);
   }
 
-  // Levels: for each provider, walk days and carry forward last known values
+  // Levels: only explicitly cumulative readings survive beyond their observation day.
   for (const [providerId, list] of byProvider) {
     const kind = kindFor(providerId, providers);
-    let lastCost = 0;
-    let lastEst = 0;
-    let lastTok = 0;
+    let cumulative: UsageSnapshot | null = null;
     let idx = 0;
 
     for (const day of days) {
+      let observedToday: UsageSnapshot | null = null;
       while (idx < list.length) {
         const when = parseIso(list[idx].snapshot.fetchedAt);
         if (!when) {
@@ -153,119 +216,96 @@ export function buildTimeSeries(
         const key = toLocalDateKey(when);
         if (key > day) break;
         const snap = list[idx].snapshot;
-        const resolved = resolveCostUsd({
-          kind,
-          costUsd: snap.costUsd,
-          inputTokens: snap.inputTokens,
-          outputTokens: snap.outputTokens,
-          totalTokens: snap.totalTokens,
-        });
-        if (resolved.value != null) {
-          lastCost = resolved.value;
-          lastEst = resolved.isEstimate ? resolved.value : 0;
-        }
-        const tok = tokenCount(snap);
-        if (tok != null) lastTok = tok;
+        if (key === day) observedToday = snap;
+        cumulative = snap.measurementKind === 'cumulative' ? snap : null;
         idx += 1;
       }
-      levelCost.set(day, (levelCost.get(day) ?? 0) + lastCost);
-      levelTokens.set(day, (levelTokens.get(day) ?? 0) + lastTok);
-      estShare.set(day, (estShare.get(day) ?? 0) + lastEst);
+      const reading = observedToday ?? cumulative;
+      if (!reading) continue;
+      const resolved = resolvedCost(kind, reading);
+      const tok = tokenCount(reading);
+      if (resolved.value != null) {
+        levelCost.set(day, (levelCost.get(day) ?? 0) + resolved.value);
+        costReadingKeys.get(day)?.push(comparabilityKey(reading));
+        if (resolved.isEstimate) {
+          estShare.set(day, (estShare.get(day) ?? 0) + resolved.value);
+        }
+      }
+      if (tok != null) {
+        levelTokens.set(day, (levelTokens.get(day) ?? 0) + tok);
+        tokenReadingKeys.get(day)?.push(comparabilityKey(reading));
+      }
     }
   }
 
-  // Deltas between consecutive snapshots
+  // Deltas between compatible cumulative snapshots only.
   for (const [providerId, list] of byProvider) {
     const kind = kindFor(providerId, providers);
-    for (let i = 0; i < list.length; i++) {
-      const cur = list[i];
+    let previousCumulative: UsageSnapshot | null = null;
+    for (const cur of list) {
       const when = parseIso(cur.snapshot.fetchedAt);
-      if (!when) continue;
-      const day = toLocalDateKey(when);
-      if (!daySet.has(day)) continue;
-
-      const curCost =
-        resolveCostUsd({
-          kind,
-          costUsd: cur.snapshot.costUsd,
-          inputTokens: cur.snapshot.inputTokens,
-          outputTokens: cur.snapshot.outputTokens,
-          totalTokens: cur.snapshot.totalTokens,
-        }).value ?? 0;
-      const curTok = tokenCount(cur.snapshot) ?? 0;
-
-      if (i === 0) {
-        // First observation in history: count as delta if positive
-        if (curCost > 0) deltaCost.set(day, (deltaCost.get(day) ?? 0) + curCost);
-        if (curTok > 0) deltaTokens.set(day, (deltaTokens.get(day) ?? 0) + curTok);
+      if (!when || cur.snapshot.measurementKind !== 'cumulative') continue;
+      if (!previousCumulative || !sameCumulativeSeries(previousCumulative, cur.snapshot)) {
+        previousCumulative = cur.snapshot;
         continue;
       }
 
-      const prev = list[i - 1];
-      const prevCost =
-        resolveCostUsd({
-          kind,
-          costUsd: prev.snapshot.costUsd,
-          inputTokens: prev.snapshot.inputTokens,
-          outputTokens: prev.snapshot.outputTokens,
-          totalTokens: prev.snapshot.totalTokens,
-        }).value ?? 0;
-      const prevTok = tokenCount(prev.snapshot) ?? 0;
+      const day = toLocalDateKey(when);
+      if (daySet.has(day)) {
+        const curCost = resolvedCost(kind, cur.snapshot).value;
+        const prevCost = resolvedCost(kind, previousCumulative).value;
+        if (
+          curCost != null &&
+          prevCost != null &&
+          comparableCostValues(previousCumulative, cur.snapshot) &&
+          curCost > prevCost
+        ) {
+          deltaCost.set(day, (deltaCost.get(day) ?? 0) + curCost - prevCost);
+        }
 
-      const dCost = curCost - prevCost;
-      const dTok = curTok - prevTok;
-      if (dCost > 0) deltaCost.set(day, (deltaCost.get(day) ?? 0) + dCost);
-      if (dTok > 0) deltaTokens.set(day, (deltaTokens.get(day) ?? 0) + dTok);
+        const curTok = tokenCount(cur.snapshot);
+        const prevTok = tokenCount(previousCumulative);
+        if (curTok != null && prevTok != null && curTok > prevTok) {
+          deltaTokens.set(day, (deltaTokens.get(day) ?? 0) + curTok - prevTok);
+        }
+      }
+      previousCumulative = cur.snapshot;
     }
   }
 
-  const points: DayPoint[] = days.map((date) => ({
-    date,
-    label: shortLabel(date),
-    costLevel: levelCost.get(date) ?? 0,
-    tokenLevel: levelTokens.get(date) ?? 0,
-    costDelta: deltaCost.get(date) ?? 0,
-    tokenDelta: deltaTokens.get(date) ?? 0,
-    estimatedShare: estShare.get(date) ?? 0,
-  }));
+  const canCombine = (keys: Array<string | null>) =>
+    keys.length <= 1 ||
+    (keys[0] != null && keys.every((key) => key === keys[0]));
+  const points: DayPoint[] = days.map((date) => {
+    const combineCost = canCombine(costReadingKeys.get(date) ?? []);
+    const combineTokens = canCombine(tokenReadingKeys.get(date) ?? []);
+    return {
+      date,
+      label: shortLabel(date),
+      costLevel: combineCost ? (levelCost.get(date) ?? 0) : null,
+      tokenLevel: combineTokens ? (levelTokens.get(date) ?? 0) : null,
+      costDelta: deltaCost.get(date) ?? 0,
+      tokenDelta: deltaTokens.get(date) ?? 0,
+      estimatedShare: combineCost ? (estShare.get(date) ?? 0) : 0,
+    };
+  });
 
   const totalCostDelta = points.reduce((s, p) => s + p.costDelta, 0);
   const totalTokenDelta = points.reduce((s, p) => s + p.tokenDelta, 0);
   const latest = points[points.length - 1];
-  const daysWithDelta = points.filter((p) => p.costDelta > 0).length;
   const averageDailyCost =
-    daysWithDelta > 0 ? totalCostDelta / range : totalCostDelta > 0 ? totalCostDelta / range : null;
+    totalCostDelta > 0 ? totalCostDelta / range : null;
   const projectedMonthlyCost =
     averageDailyCost != null && averageDailyCost > 0
       ? averageDailyCost * 30
-      : latest && latest.costLevel > 0
-        ? null // level-only data without deltas — don't invent a projection
-        : null;
-
-  // Prefer projection from deltas; if no deltas but we have level change start→end
-  let projected = projectedMonthlyCost;
-  let avgDaily = averageDailyCost;
-  if ((avgDaily == null || avgDaily === 0) && points.length >= 2) {
-    const first = points.find((p) => p.costLevel > 0);
-    const last = [...points].reverse().find((p) => p.costLevel > 0);
-    if (first && last && first.date !== last.date) {
-      const daySpan = Math.max(
-        1,
-        Math.round(
-          (new Date(last.date).getTime() - new Date(first.date).getTime()) /
-            (24 * 60 * 60 * 1000),
-        ),
-      );
-      const rise = last.costLevel - first.costLevel;
-      if (rise > 0) {
-        avgDaily = rise / daySpan;
-        projected = avgDaily * 30;
-      }
-    }
-  }
+      : null;
 
   const hasData = points.some(
-    (p) => p.costLevel > 0 || p.tokenLevel > 0 || p.costDelta > 0 || p.tokenDelta > 0,
+    (p) =>
+      (p.costLevel ?? 0) > 0 ||
+      (p.tokenLevel ?? 0) > 0 ||
+      p.costDelta > 0 ||
+      p.tokenDelta > 0,
   );
 
   return {
@@ -275,8 +315,8 @@ export function buildTimeSeries(
     totalTokenDelta,
     latestCostLevel: latest?.costLevel ?? 0,
     latestTokenLevel: latest?.tokenLevel ?? 0,
-    projectedMonthlyCost: projected,
-    averageDailyCost: avgDaily,
+    projectedMonthlyCost,
+    averageDailyCost,
     hasData,
   };
 }
@@ -287,13 +327,9 @@ export function buildCostEstimateRows(
   return providers.map((p) => {
     const u = p.lastUsage;
     const reported = u?.costUsd ?? null;
-    const resolved = resolveCostUsd({
-      kind: p.kind,
-      costUsd: u?.costUsd,
-      inputTokens: u?.inputTokens,
-      outputTokens: u?.outputTokens,
-      totalTokens: u?.totalTokens,
-    });
+    const resolved = u
+      ? resolvedCost(p.kind, u)
+      : { value: null, isEstimate: false, modelLabel: undefined };
     const tokens = u ? tokenCount(u) : null;
     return {
       providerId: p.id,
@@ -306,23 +342,43 @@ export function buildCostEstimateRows(
       isEstimate: resolved.isEstimate,
       estimateModel: resolved.modelLabel,
       tokens,
+      measurementKind: u?.measurementKind ?? 'unknown',
+      periodStart: u?.periodStart,
+      periodEnd: u?.periodEnd,
+      comparabilityKey: u ? comparabilityKey(u) : null,
     };
   });
 }
 
 export function sumDisplayCost(rows: CostEstimateRow[]): {
-  total: number;
+  total: number | null;
   estimatedPortion: number;
   reportedPortion: number;
+  comparable: boolean;
 } {
+  const active = rows.filter((row) => row.displayCost != null);
+  const key = active[0]?.comparabilityKey ?? null;
+  const comparable =
+    active.length > 0 &&
+    key != null &&
+    active.every((row) => row.comparabilityKey === key);
+  if (!comparable) {
+    return {
+      total: null,
+      estimatedPortion: 0,
+      reportedPortion: 0,
+      comparable: false,
+    };
+  }
+
   let total = 0;
   let estimatedPortion = 0;
   let reportedPortion = 0;
-  for (const r of rows) {
+  for (const r of active) {
     if (r.displayCost == null) continue;
     total += r.displayCost;
     if (r.isEstimate) estimatedPortion += r.displayCost;
     else reportedPortion += r.displayCost;
   }
-  return { total, estimatedPortion, reportedPortion };
+  return { total, estimatedPortion, reportedPortion, comparable: true };
 }

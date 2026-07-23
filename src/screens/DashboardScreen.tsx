@@ -49,7 +49,6 @@ export function DashboardScreen({
     ready,
     providers,
     history,
-    totals,
     refreshingId,
     refreshAll,
     refreshProvider,
@@ -71,17 +70,32 @@ export function DashboardScreen({
     [estimateRows],
   );
 
+  const tokenSummary = useMemo(() => {
+    const active = estimateRows.filter((row) => row.tokens != null);
+    const key = active[0]?.comparabilityKey ?? null;
+    const comparable =
+      active.length > 0 &&
+      key != null &&
+      active.every((row) => row.comparabilityKey === key);
+    return {
+      total: comparable
+        ? active.reduce((sum, row) => sum + (row.tokens ?? 0), 0)
+        : null,
+      comparable,
+    };
+  }, [estimateRows]);
+
   const breakdown = useMemo(() => {
     return providers
       .map((p) => ({
         id: p.id,
         label: p.label,
         color: PROVIDER_CATALOG[p.kind].color,
-        cost: p.lastUsage?.costUsd ?? 0,
+        cost: estimateRows.find((row) => row.providerId === p.id)?.displayCost ?? 0,
       }))
       .filter((b) => b.cost > 0)
       .sort((a, b) => b.cost - a.cost);
-  }, [providers]);
+  }, [estimateRows, providers]);
 
   const maxCost = breakdown[0]?.cost || 1;
 
@@ -114,30 +128,24 @@ export function DashboardScreen({
 
       <View style={styles.statsRow}>
         <StatCard
-          label="Tracked spend"
-          value={formatUsd(
-            estimateSum.total > 0
-              ? estimateSum.total
-              : totals.withCost
-                ? totals.costUsd
-                : null,
-          )}
+          label="Comparable spend"
+          value={formatUsd(estimateSum.total)}
           hint={
-            estimateSum.estimatedPortion > 0
-              ? 'includes token estimates'
-              : totals.withCost
-                ? `${totals.withCost} provider${totals.withCost === 1 ? '' : 's'}`
-                : 'Add keys or manual entries'
+            !estimateSum.comparable
+              ? 'Latest windows shown separately'
+              : estimateSum.estimatedPortion > 0
+                ? 'includes token estimates'
+                : 'same measurement window'
           }
           accent={t.accent}
         />
         <StatCard
-          label="Tokens"
-          value={formatTokens(totals.withTokens ? totals.tokens : null)}
+          label="Comparable tokens"
+          value={formatTokens(tokenSummary.total)}
           hint={
-            totals.withTokens
-              ? 'sum of known totals'
-              : 'when providers report them'
+            tokenSummary.comparable
+              ? 'same measurement window'
+              : 'Latest windows shown separately'
           }
           accent={t.info}
         />
@@ -181,7 +189,7 @@ export function DashboardScreen({
         title="Timeline"
         subtitle={
           series.hasData
-            ? `Spend Δ total ${formatUsd(series.totalCostDelta)} · token Δ ${formatTokens(series.totalTokenDelta)}`
+            ? `Cumulative spend Δ ${formatUsd(series.totalCostDelta)} · token Δ ${formatTokens(series.totalTokenDelta)}`
             : 'Local history builds as you refresh or log snapshots'
         }
         color={t.accent}
@@ -190,7 +198,7 @@ export function DashboardScreen({
       <TimeSeriesChart
         points={series.points}
         title="Cost level"
-        subtitle="Latest known spend reading (carry-forward per day)"
+        subtitle="Readings by day; only cumulative values carry forward"
         metric="costLevel"
         color={t.success}
         showMetricToggle={false}
@@ -209,7 +217,7 @@ export function DashboardScreen({
       {breakdown.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: t.text }]}>
-            Spend mix (reported)
+            Latest cost readings
           </Text>
           <Surface variant="card" padded>
             <View style={styles.bars}>
@@ -254,7 +262,7 @@ export function DashboardScreen({
           <Surface variant="card" padded={false}>
             <EmptyState
               title="No providers yet"
-              body="Add OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, or a custom endpoint. Keys are encrypted on-device."
+              body="Add OpenAI, Anthropic, xAI/Grok, OpenRouter, Gemini, or a custom endpoint. Native keys use OS secure storage."
             />
             <View style={styles.ctaWrap}>
               <PrimaryButton label="Add a provider" onPress={onOpenProviders} />

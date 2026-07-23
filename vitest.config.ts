@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['__tests__/**/*.test.ts'],
+    include: ['__tests__/**/*.test.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'json-summary'],
@@ -11,9 +11,6 @@ export default defineConfig({
         'src/services/**/*.ts',
         'src/utils/**/*.ts',
         'src/theme/brand.ts',
-      ],
-      exclude: [
-        'src/services/secureCredentials.ts', // OS keychain / web crypto; needs device
       ],
       thresholds: {
         lines: 80,

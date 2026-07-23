@@ -6,7 +6,7 @@ import { Surface } from './ui/Surface';
 
 interface Props {
   rows: CostEstimateRow[];
-  total: number;
+  total: number | null;
   estimatedPortion: number;
   reportedPortion: number;
   projectedMonthly: number | null;
@@ -29,8 +29,8 @@ export function CostEstimatePanel({
     <Surface variant="card" padded>
       <Text style={[styles.title, { color: t.text }]}>Cost estimates</Text>
       <Text style={[styles.subtitle, { color: t.textMuted }]}>
-        Reported API costs when available; otherwise token × public list rates
-        (clearly marked).
+        Latest readings stay separate unless their measurement windows match. Token
+        estimates require an explicit model.
       </Text>
 
       <View style={styles.summaryRow}>
@@ -44,18 +44,22 @@ export function CostEstimatePanel({
             },
           ]}
         >
-          <Text style={[styles.summaryLabel, { color: t.textMuted }]}>Best total</Text>
+          <Text style={[styles.summaryLabel, { color: t.textMuted }]}>
+            Comparable total
+          </Text>
           <Text style={[styles.summaryValue, { color: t.text }]}>
-            {formatUsd(total || null)}
+            {formatUsd(total)}
           </Text>
           <Text style={[styles.summaryHint, { color: t.textSecondary }]}>
             {reportedPortion > 0 && estimatedPortion > 0
               ? `${formatUsd(reportedPortion)} reported · ${formatUsd(estimatedPortion)} est.`
               : estimatedPortion > 0
                 ? 'includes estimates'
-                : reportedPortion > 0
-                  ? 'from providers'
-                  : 'no cost data yet'}
+                  : reportedPortion > 0
+                    ? 'from providers'
+                    : active.length > 0
+                      ? 'windows do not match'
+                      : 'no cost data yet'}
           </Text>
         </View>
         <View
@@ -115,17 +119,18 @@ export function CostEstimatePanel({
                 </View>
                 <Text style={[styles.rowMeta, { color: t.textMuted }]}>
                   {r.isEstimate
-                    ? `Estimate · ${r.estimateModel ?? 'default rates'}${
+                    ? `Estimate · ${r.estimateModel ?? 'selected rates'}${
                         r.tokens != null ? ` · ${formatTokens(r.tokens)} tok` : ''
                       }`
                     : `Reported${r.tokens != null ? ` · ${formatTokens(r.tokens)} tok` : ''}`}
+                  {` · ${r.measurementKind}`}
                 </Text>
               </View>
             ))}
         </View>
       )}
 
-      {estimatedPortion > 0 ? (
+      {active.some((row) => row.isEstimate) ? (
         <Text style={[styles.footnote, { color: t.textMuted }]}>
           * Estimated from tokens using public list prices — not a bill.
         </Text>

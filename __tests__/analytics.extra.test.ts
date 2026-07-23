@@ -36,6 +36,7 @@ describe('buildTimeSeries multi-provider', () => {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'cumulative',
           source: 'api',
           fetchedAt: '2026-07-08T12:00:00.000Z',
         },
@@ -47,6 +48,7 @@ describe('buildTimeSeries multi-provider', () => {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'cumulative',
           source: 'api',
           fetchedAt: '2026-07-09T12:00:00.000Z',
         },
@@ -58,6 +60,7 @@ describe('buildTimeSeries multi-provider', () => {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'cumulative',
           source: 'manual',
           fetchedAt: '2026-07-09T15:00:00.000Z',
         },
@@ -69,8 +72,8 @@ describe('buildTimeSeries multi-provider', () => {
     expect(series.hasData).toBe(true);
     // Final level = 15 + 4
     expect(series.latestCostLevel).toBe(19);
-    // Deltas: first obs 10 + rise 5 + first obs 4 = 19
-    expect(series.totalCostDelta).toBe(19);
+    // Only A has two observations; first observations are baselines.
+    expect(series.totalCostDelta).toBe(5);
     expect(series.averageDailyCost).not.toBeNull();
     expect(series.projectedMonthlyCost).toBeGreaterThan(0);
   });
@@ -86,6 +89,8 @@ describe('buildTimeSeries multi-provider', () => {
           inputTokens: 1000,
           outputTokens: 500,
           totalTokens: null,
+          modelId: 'grok-3-mini',
+          measurementKind: 'cumulative',
           source: 'manual',
           fetchedAt: '2026-07-09T10:00:00.000Z',
         },
@@ -97,6 +102,8 @@ describe('buildTimeSeries multi-provider', () => {
           inputTokens: 2000,
           outputTokens: 1000,
           totalTokens: null,
+          modelId: 'grok-3-mini',
+          measurementKind: 'cumulative',
           source: 'manual',
           fetchedAt: '2026-07-10T10:00:00.000Z',
         },
@@ -127,6 +134,9 @@ describe('buildCostEstimateRows / sumDisplayCost', () => {
           inputTokens: null,
           outputTokens: null,
           totalTokens: null,
+          measurementKind: 'period',
+          periodStart: '2026-07-01T00:00:00.000Z',
+          periodEnd: '2026-08-01T00:00:00.000Z',
           source: 'api',
           fetchedAt: '2026-07-10T00:00:00.000Z',
         },
@@ -139,6 +149,10 @@ describe('buildCostEstimateRows / sumDisplayCost', () => {
           inputTokens: 1_000_000,
           outputTokens: 0,
           totalTokens: 1_000_000,
+          modelId: 'gemini-2.0-flash',
+          measurementKind: 'period',
+          periodStart: '2026-07-01T00:00:00.000Z',
+          periodEnd: '2026-08-01T00:00:00.000Z',
           source: 'manual',
           fetchedAt: '2026-07-10T00:00:00.000Z',
         },
@@ -160,5 +174,43 @@ describe('buildCostEstimateRows / sumDisplayCost', () => {
     expect(sum.reportedPortion).toBe(20);
     expect(sum.estimatedPortion).toBeGreaterThan(0);
     expect(sum.total).toBe(sum.reportedPortion + sum.estimatedPortion);
+    expect(sum.comparable).toBe(true);
+  });
+
+  it('refuses to add different periods', () => {
+    const rows = buildCostEstimateRows([
+      provider({
+        id: 'july',
+        kind: 'openai',
+        lastUsage: {
+          costUsd: 10,
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          measurementKind: 'period',
+          periodStart: '2026-07-01',
+          periodEnd: '2026-08-01',
+          source: 'api',
+          fetchedAt: '2026-07-10T00:00:00.000Z',
+        },
+      }),
+      provider({
+        id: 'rolling',
+        kind: 'openai',
+        lastUsage: {
+          costUsd: 20,
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+          measurementKind: 'period',
+          periodStart: '2026-06-10',
+          periodEnd: '2026-07-10',
+          source: 'api',
+          fetchedAt: '2026-07-10T00:00:00.000Z',
+        },
+      }),
+    ]);
+
+    expect(sumDisplayCost(rows)).toMatchObject({ total: null, comparable: false });
   });
 });

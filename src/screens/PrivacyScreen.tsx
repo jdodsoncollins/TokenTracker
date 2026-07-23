@@ -7,30 +7,30 @@ import { getTheme, isMaterialChrome, spacing, typography } from '../theme/tokens
 
 const PRINCIPLES = [
   {
-    title: 'Zero usage recorded by us',
-    body: 'TokenTracker has no backend, no analytics SDK, no crash reporter that uploads content, and no account system. We cannot see your tokens, prompts, or spend — because nothing is sent to us.',
+    title: 'TokenTracker receives no usage',
+    body: 'TokenTracker has no backend, telemetry, or accounts. The app records usage snapshots locally, but TokenTracker receives no tokens, prompts, spend, or provider response bodies.',
   },
   {
-    title: 'Credentials stay offline & encrypted',
-    body: 'API keys are stored with expo-secure-store (iOS Keychain / Android Keystore). On web dev builds, keys are AES-GCM encrypted with a local master key. Keys are never written to AsyncStorage, logs, or source control.',
+    title: 'Credentials use platform storage',
+    body: 'Native keys persist in OS secure storage through expo-secure-store. TokenTracker does not require biometric authentication or claim secure enclave storage. Web keys stay in memory and disappear on reload.',
   },
   {
     title: 'Network only to your providers',
-    body: 'When you tap Refresh, the app calls OpenAI, Anthropic, xAI, OpenRouter, Google, or your custom base URL — directly over HTTPS. There is no proxy through TokenTracker infrastructure.',
+    body: 'Save and validate and Refresh send your key directly to the selected provider. Custom endpoints require HTTPS except localhost and 127.0.0.1 during local development.',
   },
   {
     title: 'Local usage cache only',
-    body: 'Usage snapshots live in on-device AsyncStorage so the dashboard works offline. You can wipe everything from this screen.',
+    body: 'Provider labels and usage snapshots live in AsyncStorage. Android backup is disabled, but iOS or platform-managed device backups may include this usage metadata.',
   },
   {
     title: 'Open source (MIT)',
-    body: 'Read the code. Audit the network calls. Fork it. The license is MIT — free for personal and commercial use with attribution.',
+    body: 'Read the code, audit the network calls, or fork it. The MIT License permits personal and commercial use with attribution.',
   },
   {
     title: 'Platform design',
     body: isMaterialChrome
       ? 'On Android, chrome follows Material Design 3 Expressive: tonal surfaces, shape scale, and navigation-bar indicators.'
-      : 'On iOS, chrome follows Apple HIG with Liquid Glass–style translucent materials so content stays in focus.',
+      : 'On iOS, chrome follows Apple HIG with Liquid Glass-style translucent materials so content stays in focus.',
   },
 ];
 
@@ -41,7 +41,7 @@ export function PrivacyScreen() {
   const onWipe = () => {
     Alert.alert(
       'Erase all local data?',
-      `This removes ${providers.length} provider(s), encrypted keys, and usage history from this device. This cannot be undone.`,
+      `This removes ${providers.length} provider(s), stored keys, and usage history from this device. This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -60,9 +60,9 @@ export function PrivacyScreen() {
       <Text style={[styles.lead, { color: t.textSecondary }]}>
         Simple promise:{' '}
         <Text style={{ color: t.privacy, fontWeight: '700' }}>
-          zero usage is ever recorded
+          TokenTracker receives no usage.
         </Text>{' '}
-        by TokenTracker. Your machine is the only place that holds secrets and history.
+        The app stores local usage snapshots for its dashboard.
       </Text>
 
       <View
@@ -76,7 +76,7 @@ export function PrivacyScreen() {
         ]}
       >
         <Text style={[styles.badgeText, { color: t.privacy }]}>
-          No accounts · No telemetry · No cloud sync
+          No accounts · No telemetry · No backend
         </Text>
       </View>
 
@@ -90,9 +90,19 @@ export function PrivacyScreen() {
       <Surface variant="card" padded>
         <Text style={[styles.cardTitle, { color: t.text }]}>What leaves the device</Text>
         <Text style={[styles.cardBody, { color: t.textSecondary }]}>
-          Only requests you initiate to LLM providers you configure (for key validation
-          and usage endpoints). Request bodies never include your chat prompts — this app
-          does not chat; it only tracks usage metadata you choose to pull or enter.
+          Save and validate and Refresh call the selected provider directly. TokenTracker
+          sends no prompts, provider response bodies, or usage metadata to a TokenTracker
+          service. No such service exists.
+        </Text>
+      </Surface>
+
+      <Surface variant="card" padded>
+        <Text style={[styles.cardTitle, { color: t.text }]}>How usage is measured</Text>
+        <Text style={[styles.cardBody, { color: t.textSecondary }]}>
+          Cumulative readings carry forward and produce deltas only against compatible
+          cumulative readings. Period and point readings appear only on the day observed.
+          Readings with different windows stay separate. Token cost estimates require an
+          explicit model and remain labelled as estimates.
         </Text>
       </Surface>
 
