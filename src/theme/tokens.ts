@@ -75,10 +75,11 @@ const liquidGlass = {
       shadowRadius: 24,
     },
     card: {
-      shadowColor: '#7C6CFF',
+      // Neutral shadow — avoid brand-colored glow that reads as AI product
+      shadowColor: '#000',
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.08,
-      shadowRadius: 16,
+      shadowOpacity: 0.18,
+      shadowRadius: 12,
     },
   },
   tabBar: {
@@ -160,10 +161,10 @@ const material3 = {
     indicator: true,
   },
   ...brand,
-  /** M3 primary more vibrant for expressive hierarchy */
-  primary: '#B4A7FF',
-  accent: '#B4A7FF',
-  accentSoft: 'rgba(180, 167, 255, 0.18)',
+  /** Slightly softer than previous expressive primary */
+  primary: '#8B93FF',
+  accent: '#8B93FF',
+  accentSoft: 'rgba(139, 147, 255, 0.16)',
   info: '#7EC8FF',
   infoSoft: 'rgba(126, 200, 255, 0.16)',
 } as const;
