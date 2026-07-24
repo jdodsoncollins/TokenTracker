@@ -24,6 +24,11 @@ import {
 } from '../services/analytics';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
 import {
+  resolveUsageCapability,
+  supportsAutoRefresh,
+} from '../services/usageCapability';
+import { hasUsageMetrics } from '../services/usageSnapshots';
+import {
   getTheme,
   isMaterialChrome,
   spacing,
@@ -100,6 +105,24 @@ export function DashboardScreen({
 
   const maxCost = breakdown[0]?.cost || 1;
 
+  const hasAnyMetrics = useMemo(
+    () => providers.some((p) => hasUsageMetrics(p.lastUsage)),
+    [providers],
+  );
+
+  const hasAutoCapable = useMemo(
+    () =>
+      providers.some((p) => supportsAutoRefresh(resolveUsageCapability(p))),
+    [providers],
+  );
+
+  const validateOnlyCount = useMemo(
+    () =>
+      providers.filter((p) => resolveUsageCapability(p) === 'validate-only')
+        .length,
+    [providers],
+  );
+
   if (!ready) {
     return (
       <View style={[styles.center, { backgroundColor: t.bg }]}>
@@ -117,103 +140,128 @@ export function DashboardScreen({
           </Text>
           <Text style={[styles.title, { color: t.text }]}>TokenTracker</Text>
         </View>
-        <PrimaryButton
-          label="Refresh"
-          variant="tonal"
-          onPress={() => refreshAll()}
-          style={styles.refreshBtn}
-        />
+        {providers.length > 0 ? (
+          <PrimaryButton
+            label={hasAutoCapable ? 'Refresh' : 'Re-validate'}
+            variant="tonal"
+            onPress={() => refreshAll()}
+            style={styles.refreshBtn}
+          />
+        ) : null}
       </View>
 
       <PrivacyBanner compact onPress={onOpenPrivacy} />
 
-      <View style={styles.statsRow}>
-        <StatCard
-          label="Comparable spend"
-          value={formatUsd(estimateSum.total)}
-          hint={
-            !estimateSum.comparable
-              ? 'Latest windows shown separately'
-              : estimateSum.estimatedPortion > 0
-                ? 'includes token estimates'
-                : 'same measurement window'
-          }
-          accent={t.accent}
-        />
-        <StatCard
-          label="Comparable tokens"
-          value={formatTokens(tokenSummary.total)}
-          hint={
-            tokenSummary.comparable
-              ? 'same measurement window'
-              : 'Latest windows shown separately'
-          }
-          accent={t.info}
-        />
-      </View>
-
-      <View style={styles.rangeRow}>
-        <Text style={[styles.sectionTitle, { color: t.text }]}>History</Text>
-        <View style={styles.rangeTabs}>
-          {RANGES.map((r) => {
-            const on = r === range;
-            return (
-              <Pressable
-                key={r}
-                onPress={() => setRange(r)}
-                style={[
-                  styles.rangeTab,
-                  {
-                    borderRadius: t.radius.full,
-                    backgroundColor: on ? t.accentSoft : t.bgCardSolid,
-                    borderColor: on ? t.accent : t.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    color: on ? t.accent : t.textMuted,
-                    fontSize: 12,
-                    fontWeight: '700',
-                  }}
-                >
-                  {r}d
-                </Text>
-              </Pressable>
-            );
-          })}
+      {providers.length > 0 && !hasAnyMetrics ? (
+        <Surface variant="card" padded>
+          <EmptyState
+            title="No usage data yet"
+            body={
+              validateOnlyCount > 0
+                ? 'OpenAI and Anthropic project keys validate but cannot pull organization costs. Log a manual snapshot, or add an organization admin key for automatic history.'
+                : 'Log a manual snapshot on a provider, or refresh if a provider supports automatic usage.'
+            }
+          />
+          <View style={styles.ctaWrap}>
+            <PrimaryButton
+              label="Open providers"
+              onPress={onOpenProviders}
+            />
+          </View>
+        </Surface>
+      ) : (
+        <View style={styles.statsRow}>
+          <StatCard
+            label="Comparable spend"
+            value={formatUsd(estimateSum.total)}
+            hint={
+              !estimateSum.comparable
+                ? 'Latest windows shown separately'
+                : estimateSum.estimatedPortion > 0
+                  ? 'includes token estimates'
+                  : 'same measurement window'
+            }
+            accent={t.accent}
+          />
+          <StatCard
+            label="Comparable tokens"
+            value={formatTokens(tokenSummary.total)}
+            hint={
+              tokenSummary.comparable
+                ? 'same measurement window'
+                : 'Latest windows shown separately'
+            }
+            accent={t.info}
+          />
         </View>
-      </View>
+      )}
 
-      <TimeSeriesChart
-        points={series.points}
-        title="Timeline"
-        subtitle={
-          series.hasData
-            ? `${range}-day spend ${formatUsd(series.totalCostDelta)} · tokens ${formatTokens(series.totalTokenDelta)}`
-            : 'Local history builds as you refresh or log snapshots'
-        }
-        color={t.accent}
-      />
+      {(hasAnyMetrics || series.hasData) && (
+        <>
+          <View style={styles.rangeRow}>
+            <Text style={[styles.sectionTitle, { color: t.text }]}>History</Text>
+            <View style={styles.rangeTabs}>
+              {RANGES.map((r) => {
+                const on = r === range;
+                return (
+                  <Pressable
+                    key={r}
+                    onPress={() => setRange(r)}
+                    style={[
+                      styles.rangeTab,
+                      {
+                        borderRadius: t.radius.full,
+                        backgroundColor: on ? t.accentSoft : t.bgCardSolid,
+                        borderColor: on ? t.accent : t.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: on ? t.accent : t.textMuted,
+                        fontSize: 12,
+                        fontWeight: '700',
+                      }}
+                    >
+                      {r}d
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
 
-      <TimeSeriesChart
-        points={series.points}
-        title="Cost level"
-        subtitle="Readings by day; only cumulative values carry forward"
-        metric="costLevel"
-        color={t.success}
-        showMetricToggle={false}
-        emptyHint="No cost levels yet — reported costs or token estimates will appear here."
-      />
+          <TimeSeriesChart
+            points={series.points}
+            title="Timeline"
+            subtitle={
+              series.hasData
+                ? `${range}-day spend ${formatUsd(series.totalCostDelta)} · tokens ${formatTokens(series.totalTokenDelta)}`
+                : 'Local history builds as you refresh or log snapshots'
+            }
+            color={t.accent}
+          />
 
-      <CostEstimatePanel
-        rows={estimateRows}
-        total={estimateSum.total}
-        estimatedPortion={estimateSum.estimatedPortion}
-        reportedPortion={estimateSum.reportedPortion}
-        projectedMonthly={series.projectedMonthlyCost}
-        averageDaily={series.averageDailyCost}
-      />
+          <TimeSeriesChart
+            points={series.points}
+            title="Cost level"
+            subtitle="Readings by day; only cumulative values carry forward"
+            metric="costLevel"
+            color={t.success}
+            showMetricToggle={false}
+            emptyHint="No cost levels yet — reported costs or token estimates will appear here."
+          />
+
+          <CostEstimatePanel
+            rows={estimateRows}
+            total={estimateSum.total}
+            estimatedPortion={estimateSum.estimatedPortion}
+            reportedPortion={estimateSum.reportedPortion}
+            projectedMonthly={series.projectedMonthlyCost}
+            averageDaily={series.averageDailyCost}
+          />
+        </>
+      )}
 
       {breakdown.length > 0 && (
         <View style={styles.section}>
