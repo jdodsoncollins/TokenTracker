@@ -7,11 +7,17 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import type { ProviderConfig, ProviderKind, UsageSnapshot } from '../types';
+import type {
+  ProviderConfig,
+  ProviderKind,
+  UsageCapability,
+  UsageSnapshot,
+} from '../types';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
 import {
   createManualSnapshot,
   fetchProviderUsage,
+  type FetchResult,
 } from '../services/providers/fetchUsage';
 import {
   deleteCredential,
@@ -34,6 +40,23 @@ import {
   hasUsageMetrics,
   restoreLatestUsage,
 } from '../services/usageSnapshots';
+
+const ALWAYS_MANUAL: ProviderKind[] = ['xai', 'google', 'custom'];
+
+function capabilityFromFetch(
+  kind: ProviderKind,
+  result: FetchResult,
+): UsageCapability {
+  if (!result.ok && !result.validated) return 'none';
+  if (ALWAYS_MANUAL.includes(kind)) return 'manual-only';
+  if (hasUsageMetrics(result.snapshot) || (result.history && result.history.length > 0)) {
+    return 'full';
+  }
+  if (result.validated || result.ok) {
+    return PROVIDER_CATALOG[kind].supportsAutoUsage ? 'validate-only' : 'manual-only';
+  }
+  return 'none';
+}
 
 interface AppState {
   ready: boolean;
@@ -136,6 +159,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const id = createId();
       const now = new Date().toISOString();
       const def = PROVIDER_CATALOG[input.kind];
+      const hasKey = Boolean(input.apiKey.trim());
       const config: ProviderConfig = {
         id,
         kind: input.kind,
@@ -143,18 +167,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         baseUrl: input.baseUrl?.trim() || undefined,
         createdAt: now,
         updatedAt: now,
-        hasCredential: Boolean(input.apiKey.trim()),
+        hasCredential: hasKey,
         lastUsage: null,
         lastError: null,
+        usageCapability: hasKey
+          ? ALWAYS_MANUAL.includes(input.kind)
+            ? 'manual-only'
+            : undefined
+          : 'none',
       };
 
-      if (input.apiKey.trim()) {
+      if (hasKey) {
         await saveCredential(id, input.apiKey);
       }
 
       await updateProviders((current) => [config, ...current]);
 
-      if (input.apiKey.trim()) {
+      if (hasKey) {
         try {
           const result = await fetchProviderUsage(
             input.kind,
@@ -166,8 +195,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               result.history.map((snapshot) => ({ providerId: id, snapshot })),
             );
           } else if (hasUsageMetrics(result.snapshot)) {
-            await recordHistory([{ providerId: id, snapshot: result.snapshot }]);
+            await recordHistory([{ providerId: id, snapshot: result.snapshot! }]);
           }
+          const capability = capabilityFromFetch(input.kind, result);
           await updateProviders((current) =>
             current.map((p) =>
               p.id === id
@@ -180,6 +210,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                     lastError: result.ok
                       ? null
                       : result.message ?? 'Refresh failed',
+                    usageCapability: capability,
+                    hasCredential: true,
                   }
                 : p,
             ),
@@ -188,12 +220,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ok: result.ok,
             message: result.message,
           };
-        } catch (e) {
+        } catch {
           const msg = 'Network error';
           await updateProviders((current) =>
             current.map((p) =>
               p.id === id
-                ? { ...p, lastError: msg, updatedAt: new Date().toISOString() }
+                ? {
+                    ...p,
+                    lastError: msg,
+                    usageCapability: 'none',
+                    updatedAt: new Date().toISOString(),
+                  }
                 : p,
             ),
           );
@@ -232,6 +269,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                     ...p,
                     lastError:
                       'No credential stored. Update the API key or log usage manually.',
+                    usageCapability: 'none',
                     updatedAt: new Date().toISOString(),
                   }
                 : p,
@@ -245,8 +283,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             result.history.map((snapshot) => ({ providerId: id, snapshot })),
           );
         } else if (hasUsageMetrics(result.snapshot)) {
-          await recordHistory([{ providerId: id, snapshot: result.snapshot }]);
+          await recordHistory([{ providerId: id, snapshot: result.snapshot! }]);
         }
+        const capability = capabilityFromFetch(provider.kind, result);
         await updateProviders((current) =>
           current.map((p) =>
             p.id === id
@@ -258,12 +297,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   lastError: result.ok ? null : result.message ?? 'Refresh failed',
                   updatedAt: new Date().toISOString(),
                   hasCredential: true,
+                  usageCapability: capability,
                 }
               : p,
           ),
         );
         return { ok: result.ok, message: result.message };
-      } catch (e) {
+      } catch {
         const msg = 'Refresh failed';
         await updateProviders((current) =>
           current.map((p) =>
@@ -310,6 +350,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 lastUsage: snapshot,
                 lastError: null,
                 updatedAt: new Date().toISOString(),
+                // Keep existing capability; manual entry doesn't upgrade to full auto
               }
             : p,
         ),
