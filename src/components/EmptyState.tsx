@@ -10,8 +10,8 @@ export function EmptyState({ title, body }: Props) {
   const t = getTheme();
   return (
     <View style={styles.wrap}>
-      <View style={[styles.iconRing, { borderColor: t.accentSoft, backgroundColor: t.accentSoft }]}>
-        <Text style={[styles.emoji, { color: t.accent }]}>◈</Text>
+      <View style={[styles.iconRing, { borderColor: t.border, backgroundColor: t.bgElevated }]}>
+        <Text style={[styles.emoji, { color: t.textMuted }]}>○</Text>
       </View>
       <Text style={[styles.title, { color: t.text }]}>{title}</Text>
       <Text style={[styles.body, { color: t.textSecondary }]}>{body}</Text>
