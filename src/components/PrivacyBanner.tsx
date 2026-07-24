@@ -21,20 +21,20 @@ export function PrivacyBanner({ onPress, compact }: Props) {
         solid
         padded={false}
         style={{
-          borderColor: 'rgba(61, 220, 151, 0.28)',
-          backgroundColor: t.privacySoft,
+          borderColor: t.borderSubtle,
+          backgroundColor: t.bgCardSolid,
         }}
       >
         <View style={[styles.row, compact && styles.compact]}>
           <View style={[styles.dot, { backgroundColor: t.privacy }]} />
           <View style={styles.textCol}>
-            <Text style={[styles.title, { color: t.privacy }]}>
-              Zero telemetry. Zero accounts.
+            <Text style={[styles.title, { color: t.text }]}>
+              Local only · no accounts or telemetry
             </Text>
             {!compact && (
               <Text style={[styles.body, { color: t.textSecondary }]}>
-                Usage stays local. Native keys use OS secure storage. Provider calls
-                go directly to the provider you select.
+                Keys stay in OS secure storage. Provider calls go directly to the
+                provider you select.
               </Text>
             )}
             {compact && (
@@ -59,18 +59,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     marginTop: 5,
   },
   textCol: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
   title: {
     ...typography.callout,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   body: {
     fontSize: 13,
