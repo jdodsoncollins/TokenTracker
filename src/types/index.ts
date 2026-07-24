@@ -9,6 +9,19 @@ export type ProviderKind =
 export type UsageSource = 'api' | 'manual' | 'unknown';
 export type MeasurementKind = 'cumulative' | 'period' | 'point';
 
+/**
+ * How usage can be obtained for a provider credential.
+ * - full: provider returned costs and/or tokens automatically
+ * - validate-only: key works but org/account reports are unavailable (e.g. non-admin OpenAI)
+ * - manual-only: provider never exposes auto usage (xAI, Gemini, custom)
+ * - none: no credential or validation failed
+ */
+export type UsageCapability =
+  | 'full'
+  | 'validate-only'
+  | 'manual-only'
+  | 'none';
+
 export interface UsageSnapshot {
   /** Estimated or reported spend in USD for the current window. */
   costUsd: number | null;
@@ -46,6 +59,11 @@ export interface ProviderConfig {
   lastError?: string | null;
   /** Key is stored separately in SecureStore — never in this object. */
   hasCredential: boolean;
+  /**
+   * Last known ability to pull automatic usage for this credential.
+   * Derived on fetch; falls back to catalog defaults when unknown.
+   */
+  usageCapability?: UsageCapability;
 }
 
 export interface ProviderDefinition {
