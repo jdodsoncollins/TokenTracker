@@ -21,6 +21,13 @@ import {
   validateManualUsageInput,
 } from '../services/pricing';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
+import {
+  capabilityExplainer,
+  capabilityStatusLabel,
+  resolveUsageCapability,
+  supportsAutoRefresh,
+} from '../services/usageCapability';
+import { hasUsageMetrics } from '../services/usageSnapshots';
 import { getTheme, spacing, typography } from '../theme/tokens';
 import { formatRelativeTime, formatTokens, formatUsd } from '../utils/format';
 
@@ -87,6 +94,9 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
 
   const def = PROVIDER_CATALOG[provider.kind];
   const usage = provider.lastUsage;
+  const capability = resolveUsageCapability(provider);
+  const autoAvailable = supportsAutoRefresh(capability);
+  const explainer = capabilityExplainer(provider.kind, capability);
   const modelRates = modelRatesForProvider(provider.kind);
   const tokensNeedEstimate =
     cost.trim() === '' && (inputTok.trim() !== '' || outputTok.trim() !== '');
@@ -137,7 +147,8 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
     Alert.alert(
       result.ok ? 'Key updated' : 'Key saved with a warning',
       result.ok
-        ? 'Saved in OS secure storage and validated.'
+        ? result.message ??
+            'Saved in OS secure storage and validated.'
         : result.message ?? 'The provider could not validate this key.',
     );
   };
@@ -159,6 +170,184 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
       ],
     );
   };
+
+  const manualSection = (
+    <Surface variant="card" padded>
+      <Text style={[styles.cardTitle, { color: t.text }]}>Manual snapshot</Text>
+      <Text style={[styles.help, { color: t.textSecondary }]}>
+        {autoAvailable
+          ? 'Enter a cost, tokens, or both when you want a point reading. Token-only snapshots need a pricing model.'
+          : 'Enter a cost, tokens, or both. This is the primary way to track usage for this key. Token-only snapshots need a pricing model.'}
+      </Text>
+      <TextInput
+        style={[styles.input, inputStyle]}
+        placeholder="Cost USD (e.g. 12.40)"
+        placeholderTextColor={t.textMuted}
+        keyboardType="decimal-pad"
+        value={cost}
+        onChangeText={setCost}
+      />
+      <TextInput
+        style={[styles.input, inputStyle]}
+        placeholder="Input tokens"
+        placeholderTextColor={t.textMuted}
+        keyboardType="number-pad"
+        value={inputTok}
+        onChangeText={setInputTok}
+      />
+      <TextInput
+        style={[styles.input, inputStyle]}
+        placeholder="Output tokens"
+        placeholderTextColor={t.textMuted}
+        keyboardType="number-pad"
+        value={outputTok}
+        onChangeText={setOutputTok}
+      />
+      {tokensNeedEstimate ? (
+        <View style={styles.modelSection}>
+          <Text style={[styles.modelLabel, { color: t.textSecondary }]}>
+            Pricing model
+          </Text>
+          <View style={styles.modelOptions}>
+            {modelRates.map((model) => {
+              const selected = model.id === modelId;
+              return (
+                <Pressable
+                  key={model.id}
+                  onPress={() => setModelId(model.id)}
+                  style={[
+                    styles.modelOption,
+                    {
+                      borderColor: selected ? t.accent : t.border,
+                      backgroundColor: selected ? t.accentSoft : t.bgElevated,
+                      borderRadius: t.radius.full,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: selected ? t.accent : t.textSecondary,
+                      fontSize: 12,
+                      fontWeight: '600',
+                    }}
+                  >
+                    {model.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+      <TextInput
+        style={[styles.input, inputStyle]}
+        placeholder="Note (optional)"
+        placeholderTextColor={t.textMuted}
+        value={note}
+        onChangeText={setNote}
+      />
+      <PrimaryButton
+        label="Save snapshot"
+        onPress={onManual}
+        loading={busy}
+        style={{ marginTop: spacing.sm }}
+      />
+    </Surface>
+  );
+
+  const snapshotSection = (
+    <Surface variant="card" padded>
+      <View style={styles.snapshotHeader}>
+        <Text style={[styles.cardTitle, { color: t.text, marginBottom: 0 }]}>
+          Latest snapshot
+        </Text>
+        <View
+          style={[
+            styles.statusChip,
+            {
+              backgroundColor: autoAvailable ? t.privacySoft : t.accentSoft,
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: autoAvailable ? t.privacy : t.textSecondary,
+              fontSize: 11,
+              fontWeight: '600',
+            }}
+          >
+            {capabilityStatusLabel(capability)}
+          </Text>
+        </View>
+      </View>
+
+      {hasUsageMetrics(usage) ? (
+        <>
+          <View style={styles.grid}>
+            <View style={styles.cell}>
+              <Text style={[styles.cellLabel, { color: t.textMuted }]}>Cost</Text>
+              <Text style={[styles.cellValue, { color: t.text }]}>
+                {formatUsd(usage?.costUsd)}
+              </Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={[styles.cellLabel, { color: t.textMuted }]}>Tokens</Text>
+              <Text style={[styles.cellValue, { color: t.text }]}>
+                {formatTokens(usage?.totalTokens)}
+              </Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={[styles.cellLabel, { color: t.textMuted }]}>Input</Text>
+              <Text style={[styles.cellValue, { color: t.text }]}>
+                {formatTokens(usage?.inputTokens)}
+              </Text>
+            </View>
+            <View style={styles.cell}>
+              <Text style={[styles.cellLabel, { color: t.textMuted }]}>Output</Text>
+              <Text style={[styles.cellValue, { color: t.text }]}>
+                {formatTokens(usage?.outputTokens)}
+              </Text>
+            </View>
+          </View>
+          {liveEstimate?.isEstimate && liveEstimate.value != null ? (
+            <Text style={[styles.estimate, { color: t.warning }]}>
+              Est. cost {formatUsd(liveEstimate.value)}
+              {liveEstimate.modelLabel ? ` · ${liveEstimate.modelLabel} rates` : ''}
+            </Text>
+          ) : null}
+          <Text style={[styles.meta, { color: t.textMuted }]}>
+            Source: {usage?.source ?? '—'} · {formatRelativeTime(usage?.fetchedAt)}
+          </Text>
+          {usage?.windowLabel ? (
+            <Text style={[styles.meta, { color: t.textMuted }]}>
+              {usage.windowLabel}
+            </Text>
+          ) : null}
+          <Text style={[styles.meta, { color: t.textMuted }]}>
+            Measurement: {usage?.measurementKind ?? 'unknown'}
+          </Text>
+        </>
+      ) : (
+        <Text style={[styles.help, { color: t.textSecondary, marginTop: spacing.sm }]}>
+          {capability === 'validate-only'
+            ? 'No automatic usage for this key yet. Use a manual snapshot or an organization admin key.'
+            : 'No snapshot yet. Log one below or refresh if this provider supports auto usage.'}
+        </Text>
+      )}
+
+      {provider.lastError ? (
+        <Text style={[styles.error, { color: t.danger }]}>{provider.lastError}</Text>
+      ) : null}
+
+      <PrimaryButton
+        label={autoAvailable ? 'Refresh from provider' : 'Re-validate key'}
+        variant="tonal"
+        onPress={() => refreshProvider(provider.id)}
+        loading={refreshingId === provider.id}
+        style={{ marginTop: spacing.sm }}
+      />
+    </Surface>
+  );
 
   return (
     <Screen bottomPad={40} keyboard>
@@ -186,65 +375,26 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
         </Text>
       </View>
 
-      <Surface variant="card" padded>
-        <Text style={[styles.cardTitle, { color: t.text }]}>Latest snapshot</Text>
-        <View style={styles.grid}>
-          <View style={styles.cell}>
-            <Text style={[styles.cellLabel, { color: t.textMuted }]}>Cost</Text>
-            <Text style={[styles.cellValue, { color: t.text }]}>
-              {formatUsd(usage?.costUsd)}
-            </Text>
-          </View>
-          <View style={styles.cell}>
-            <Text style={[styles.cellLabel, { color: t.textMuted }]}>Tokens</Text>
-            <Text style={[styles.cellValue, { color: t.text }]}>
-              {formatTokens(usage?.totalTokens)}
-            </Text>
-          </View>
-          <View style={styles.cell}>
-            <Text style={[styles.cellLabel, { color: t.textMuted }]}>Input</Text>
-            <Text style={[styles.cellValue, { color: t.text }]}>
-              {formatTokens(usage?.inputTokens)}
-            </Text>
-          </View>
-          <View style={styles.cell}>
-            <Text style={[styles.cellLabel, { color: t.textMuted }]}>Output</Text>
-            <Text style={[styles.cellValue, { color: t.text }]}>
-              {formatTokens(usage?.outputTokens)}
-            </Text>
-          </View>
-        </View>
-        {liveEstimate?.isEstimate && liveEstimate.value != null ? (
-          <Text style={[styles.estimate, { color: t.warning }]}>
-            Est. cost {formatUsd(liveEstimate.value)}
-            {liveEstimate.modelLabel ? ` · ${liveEstimate.modelLabel} rates` : ''}
+      {explainer ? (
+        <Surface
+          variant="card"
+          padded
+          style={{
+            borderColor: t.borderSubtle,
+            backgroundColor: t.bgCardSolid,
+          }}
+        >
+          <Text style={[styles.explainerTitle, { color: t.text }]}>
+            Why no automatic usage?
           </Text>
-        ) : null}
-        <Text style={[styles.meta, { color: t.textMuted }]}>
-          Source: {usage?.source ?? '—'} · {formatRelativeTime(usage?.fetchedAt)}
-        </Text>
-        {usage?.windowLabel ? (
-          <Text style={[styles.meta, { color: t.textMuted }]}>
-            {usage.windowLabel}
-          </Text>
-        ) : null}
-        <Text style={[styles.meta, { color: t.textMuted }]}>
-          Measurement: {usage?.measurementKind ?? 'unknown'}
-        </Text>
-        {provider.lastError ? (
-          <Text style={[styles.error, { color: t.danger }]}>
-            {provider.lastError}
-          </Text>
-        ) : null}
+          <Text style={[styles.help, { color: t.textSecondary }]}>{explainer}</Text>
+        </Surface>
+      ) : null}
 
-        <PrimaryButton
-          label="Refresh from provider"
-          variant="tonal"
-          onPress={() => refreshProvider(provider.id)}
-          loading={refreshingId === provider.id}
-          style={{ marginTop: spacing.sm }}
-        />
-      </Surface>
+      {/* When auto is unavailable, lead with manual entry so the screen feels actionable */}
+      {!autoAvailable ? manualSection : null}
+      {snapshotSection}
+      {autoAvailable ? manualSection : null}
 
       <TimeSeriesChart
         points={series.points}
@@ -255,92 +405,18 @@ export function ProviderDetailScreen({ providerId, onBack }: Props) {
             : `${providerHistory.length} local snapshot${providerHistory.length === 1 ? '' : 's'}`
         }
         color={def.color}
-        emptyHint="Refresh or log snapshots for this provider to chart usage over time."
+        emptyHint={
+          autoAvailable
+            ? 'Refresh or log snapshots for this provider to chart usage over time.'
+            : 'Log manual snapshots to build a local timeline for this provider.'
+        }
       />
 
       <Surface variant="card" padded>
-        <Text style={[styles.cardTitle, { color: t.text }]}>Manual snapshot</Text>
-        <Text style={[styles.help, { color: t.textSecondary }]}>
-          Enter a cost, tokens, or both. Token-only snapshots need a pricing model.
-          Manual entries are point readings and are never treated as cumulative usage.
-        </Text>
-        <TextInput
-          style={[styles.input, inputStyle]}
-          placeholder="Cost USD (e.g. 12.40)"
-          placeholderTextColor={t.textMuted}
-          keyboardType="decimal-pad"
-          value={cost}
-          onChangeText={setCost}
-        />
-        <TextInput
-          style={[styles.input, inputStyle]}
-          placeholder="Input tokens"
-          placeholderTextColor={t.textMuted}
-          keyboardType="number-pad"
-          value={inputTok}
-          onChangeText={setInputTok}
-        />
-        <TextInput
-          style={[styles.input, inputStyle]}
-          placeholder="Output tokens"
-          placeholderTextColor={t.textMuted}
-          keyboardType="number-pad"
-          value={outputTok}
-          onChangeText={setOutputTok}
-        />
-        {tokensNeedEstimate ? (
-          <View style={styles.modelSection}>
-            <Text style={[styles.modelLabel, { color: t.textSecondary }]}>
-              Pricing model
-            </Text>
-            <View style={styles.modelOptions}>
-              {modelRates.map((model) => {
-                const selected = model.id === modelId;
-                return (
-                  <Pressable
-                    key={model.id}
-                    onPress={() => setModelId(model.id)}
-                    style={[
-                      styles.modelOption,
-                      {
-                        borderColor: selected ? t.accent : t.border,
-                        backgroundColor: selected ? t.accentSoft : t.bgElevated,
-                        borderRadius: t.radius.full,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: selected ? t.accent : t.textSecondary,
-                        fontSize: 12,
-                        fontWeight: '600',
-                      }}
-                    >
-                      {model.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        ) : null}
-        <TextInput
-          style={[styles.input, inputStyle]}
-          placeholder="Note (optional)"
-          placeholderTextColor={t.textMuted}
-          value={note}
-          onChangeText={setNote}
-        />
-        <PrimaryButton
-          label="Save snapshot"
-          onPress={onManual}
-          loading={busy}
-          style={{ marginTop: spacing.sm }}
-        />
-      </Surface>
-
-      <Surface variant="card" padded>
         <Text style={[styles.cardTitle, { color: t.text }]}>Update API key</Text>
+        <Text style={[styles.help, { color: t.textSecondary }]}>
+          {def.keyHint}
+        </Text>
         <TextInput
           style={[styles.input, inputStyle]}
           placeholder={def.keyHint}
@@ -383,7 +459,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 4,
   },
+  explainerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
   help: { fontSize: 13, lineHeight: 18, marginBottom: 4 },
+  snapshotHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginBottom: 4,
+  },
+  statusChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   cell: { width: '45%' },
   cellLabel: {
