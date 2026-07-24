@@ -20,10 +20,11 @@ import {
   spacing,
 } from '../theme/tokens';
 
+// Prefer simple, familiar glyphs over decorative geometric symbols
 const TABS: { id: TabId; label: string; icon: string }[] = [
-  { id: 'dashboard', label: 'Home', icon: '◈' },
-  { id: 'providers', label: 'Providers', icon: '◎' },
-  { id: 'privacy', label: 'Privacy', icon: '◌' },
+  { id: 'dashboard', label: 'Home', icon: '⌂' },
+  { id: 'providers', label: 'Providers', icon: '☰' },
+  { id: 'privacy', label: 'Privacy', icon: '○' },
 ];
 
 /**
@@ -63,7 +64,7 @@ export function RootShell() {
         accessibilityLabel={item.label}
         android_ripple={
           isMaterialChrome
-            ? { color: 'rgba(180,167,255,0.15)', borderless: true, radius: 36 }
+            ? { color: 'rgba(139,147,255,0.15)', borderless: true, radius: 36 }
             : undefined
         }
       >
@@ -81,7 +82,6 @@ export function RootShell() {
             style={[
               styles.tabIcon,
               { color: active ? t.accent : t.textMuted },
-              isAppleChrome && active && styles.tabIconAppleActive,
             ]}
           >
             {item.icon}
@@ -92,7 +92,7 @@ export function RootShell() {
             styles.tabLabel,
             {
               color: active ? (isMaterialChrome ? t.accent : t.text) : t.textMuted,
-              fontWeight: active ? '700' : '600',
+              fontWeight: active ? '600' : '500',
             },
           ]}
         >
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
   floatingRim: {
     ...StyleSheet.absoluteFillObject,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.08)',
     borderRadius: 28,
   },
   tabRow: {
@@ -220,12 +220,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   tabIcon: {
-    fontSize: 17,
-  },
-  tabIconAppleActive: {
-    textShadowColor: 'rgba(124, 108, 255, 0.55)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
+    fontSize: 18,
   },
   tabLabel: {
     fontSize: 11,
