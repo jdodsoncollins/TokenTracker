@@ -7,6 +7,12 @@ import {
 } from 'react-native';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_CATALOG } from '../services/providers/catalog';
+import {
+  capabilityStatusLabel,
+  resolveUsageCapability,
+  supportsAutoRefresh,
+} from '../services/usageCapability';
+import { hasUsageMetrics } from '../services/usageSnapshots';
 import { getTheme, isMaterialChrome, spacing, typography } from '../theme/tokens';
 import { formatRelativeTime, formatTokens, formatUsd } from '../utils/format';
 import { Surface } from './ui/Surface';
@@ -27,13 +33,16 @@ export function ProviderCard({
   const t = getTheme();
   const def = PROVIDER_CATALOG[provider.kind];
   const usage = provider.lastUsage;
+  const capability = resolveUsageCapability(provider);
+  const hasMetrics = hasUsageMetrics(usage);
+  const showAutoRefresh = supportsAutoRefresh(capability) || capability === 'validate-only';
 
   return (
     <Pressable
       onPress={onPress}
       android_ripple={
         isMaterialChrome
-          ? { color: 'rgba(180,167,255,0.08)' }
+          ? { color: 'rgba(139,147,255,0.08)' }
           : undefined
       }
       style={({ pressed }) => [
@@ -55,58 +64,111 @@ export function ProviderCard({
                 {provider.hasCredential ? ' · key on device' : ' · no key'}
               </Text>
             </View>
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation?.();
-                onRefresh?.();
-              }}
-              hitSlop={10}
-              style={[
-                styles.refreshBtn,
-                {
-                  backgroundColor: t.bgElevated,
-                  borderColor: t.border,
-                  borderRadius: t.radius.full,
-                },
-              ]}
-              accessibilityLabel={`Refresh ${provider.label}`}
-            >
-              {refreshing ? (
-                <ActivityIndicator size="small" color={t.accent} />
-              ) : (
-                <Text style={[styles.refreshText, { color: t.accent }]}>↻</Text>
-              )}
-            </Pressable>
+            {showAutoRefresh ? (
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  onRefresh?.();
+                }}
+                hitSlop={10}
+                style={[
+                  styles.refreshBtn,
+                  {
+                    backgroundColor: t.bgElevated,
+                    borderColor: t.border,
+                    borderRadius: t.radius.full,
+                  },
+                ]}
+                accessibilityLabel={
+                  supportsAutoRefresh(capability)
+                    ? `Refresh ${provider.label}`
+                    : `Re-validate ${provider.label}`
+                }
+              >
+                {refreshing ? (
+                  <ActivityIndicator size="small" color={t.accent} />
+                ) : (
+                  <Text style={[styles.refreshText, { color: t.accent }]}>↻</Text>
+                )}
+              </Pressable>
+            ) : null}
           </View>
 
-          <View style={styles.stats}>
-            <View style={styles.stat}>
-              <Text style={[styles.statLabel, { color: t.textMuted }]}>Cost</Text>
-              <Text style={[styles.statValue, { color: t.text }]}>
-                {formatUsd(usage?.costUsd)}
-              </Text>
-            </View>
-            <View style={styles.stat}>
-              <Text style={[styles.statLabel, { color: t.textMuted }]}>Tokens</Text>
-              <Text style={[styles.statValue, { color: t.text }]}>
-                {formatTokens(usage?.totalTokens)}
-              </Text>
-            </View>
-            <View style={styles.stat}>
-              <Text style={[styles.statLabel, { color: t.textMuted }]}>
-                Updated
-              </Text>
-              <Text style={[styles.statValueSm, { color: t.textSecondary }]}>
-                {formatRelativeTime(usage?.fetchedAt ?? provider.updatedAt)}
-              </Text>
-            </View>
+          <View
+            style={[
+              styles.chip,
+              {
+                backgroundColor:
+                  capability === 'full'
+                    ? t.privacySoft
+                    : capability === 'none'
+                      ? t.dangerSoft
+                      : t.accentSoft,
+                borderColor:
+                  capability === 'full'
+                    ? 'rgba(61, 220, 151, 0.25)'
+                    : capability === 'none'
+                      ? t.border
+                      : t.borderSubtle,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                color:
+                  capability === 'full'
+                    ? t.privacy
+                    : capability === 'none'
+                      ? t.danger
+                      : t.textSecondary,
+                fontSize: 11,
+                fontWeight: '600',
+              }}
+            >
+              {capabilityStatusLabel(capability)}
+            </Text>
           </View>
+
+          {hasMetrics ? (
+            <View style={styles.stats}>
+              <View style={styles.stat}>
+                <Text style={[styles.statLabel, { color: t.textMuted }]}>Cost</Text>
+                <Text style={[styles.statValue, { color: t.text }]}>
+                  {formatUsd(usage?.costUsd)}
+                </Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statLabel, { color: t.textMuted }]}>Tokens</Text>
+                <Text style={[styles.statValue, { color: t.text }]}>
+                  {formatTokens(usage?.totalTokens)}
+                </Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statLabel, { color: t.textMuted }]}>
+                  Updated
+                </Text>
+                <Text style={[styles.statValueSm, { color: t.textSecondary }]}>
+                  {formatRelativeTime(usage?.fetchedAt ?? provider.updatedAt)}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <Text style={[styles.hint, { color: t.textMuted }]}>
+              {capability === 'validate-only'
+                ? 'Key works. Log a manual snapshot or use an admin key for automatic usage.'
+                : capability === 'manual-only'
+                  ? 'Log a manual snapshot to track spend and tokens.'
+                  : capability === 'none'
+                    ? 'Add an API key to validate or log usage manually.'
+                    : usage?.windowLabel ?? 'No usage yet'}
+            </Text>
+          )}
 
           {provider.lastError ? (
             <Text style={[styles.error, { color: t.danger }]} numberOfLines={2}>
               {provider.lastError}
             </Text>
-          ) : usage?.windowLabel ? (
+          ) : hasMetrics && usage?.windowLabel ? (
             <Text style={[styles.window, { color: t.textMuted }]}>
               {usage.windowLabel}
             </Text>
@@ -160,6 +222,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
+  chip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   stats: {
     flexDirection: 'row',
     gap: spacing.md,
@@ -180,6 +249,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginTop: 4,
+  },
+  hint: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   error: {
     fontSize: 12,
